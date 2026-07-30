@@ -13,6 +13,7 @@ source "$ENVFILE"
 
 IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${IMAGE_NAME}:latest"
 JOB_SA="rotato-job@${PROJECT_ID}.iam.gserviceaccount.com"
+SCHED_SA="rotato-sched@${PROJECT_ID}.iam.gserviceaccount.com"
 
 gcloud config set project "$PROJECT_ID"
 
@@ -50,6 +51,18 @@ fi
 echo "== service accounts =="
 gcloud iam service-accounts create rotato-job   --display-name="rotato job"       2>/dev/null || true
 gcloud iam service-accounts create rotato-sched --display-name="rotato scheduler" 2>/dev/null || true
+
+# IAM service-account creation is eventually consistent — wait until each SA is
+# visible before referencing it in a binding (avoids "does not exist", including
+# when run.sh proceeds straight into add-rotator.sh).
+for sa in "$JOB_SA" "$SCHED_SA"; do
+  for _ in $(seq 1 15); do
+    gcloud iam service-accounts describe "$sa" >/dev/null 2>&1 && break
+    echo "  waiting for ${sa} to propagate..."
+    sleep 2
+  done
+done
+
 gcloud secrets add-iam-policy-binding bws-access-token \
   --member="serviceAccount:${JOB_SA}" --role="roles/secretmanager.secretAccessor"
 
