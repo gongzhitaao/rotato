@@ -1,0 +1,183 @@
+#+title: rotato
+
+Serverless secret/key rotation. A scheduled [[https://cloud.google.com/run/docs/create-jobs][Cloud Run job]]
+rotates expiring credentials and writes the fresh value back to
+[[https://bitwarden.com/products/secrets-manager/][Bitwarden Secrets Manager]], so every machine fetches a current secret on
+demand and nothing needs a long-running server.
+
+* Design
+
+/The rotation loop/ (runs on a schedule, unattended):
+
+#+begin_example
+Cloud Scheduler ──(cron)──► Cloud Run job  "rotato <name>"
+                                  │
+   ┌──────────────────────────────┘
+   │ 1. read current value  ───────────►  Bitwarden Secrets Manager
+   │ 2. rotate at provider  ───────────►  e.g. GitLab: revoke old, mint new
+   │ 3. write new value back ──────────►  Bitwarden
+   └ 4. re-read & verify (else fail loudly, log the new value as break-glass)
+#+end_example
+
+/The consumer read path/ (laptop / VM, on every git operation):
+
+#+begin_example
+git push / pull ─► rotato-git-credential ─► rotato-fetch ─► bws secret get ─► Bitwarden
+                   (git credential helper)                  read-only; never written to disk
+#+end_example
+
+** Invariants
+
+- *One rotator per secret, and only it may write.* Rotation revokes the old
+  value immediately, so exactly one job rotates; every consumer is read-only.
+- *The bootstrap token is the only standing secret.* The rotator's read+write
+  Bitwarden token lives in Secret Manager and is the sole long-lived credential.
+  The rotated secret refreshes itself and is never written to a consumer's disk.
+- *Verify write-back.* A rotation that succeeds but fails to store the new value
+  leaves the credential nowhere — so the framework re-reads Bitwarden and fails
+  loudly (logging the value as break-glass) if it doesn't match.
+- *No retries; rely on margin + alerts.* Jobs run ~--max-retries=0~ (a half-done
+  rotation can't be retried — the old token is already dead). Safety comes from a
+  wide expiry margin (rotate far more often than the lifetime, e.g. every 14 days
+  on a 30-day token) plus an email alert on failure.
+- *Two independent revocation levers.* Revoke a consumer's read-only Bitwarden
+  machine account → that machine can no longer /fetch/ (laptop/VM isolated).
+  Rotate/revoke the secret itself → burns the credential everywhere.
+- *Project is the scope boundary.* Bitwarden grants access per /project/, not per
+  secret, so a project is the unit of least privilege.
+
+The rotation core is Python (real error handling, the Bitwarden SDK, mockable
+tests); the ~deploy/*~ and ~consumer/*~ scripts stay bash since they only
+orchestrate ~gcloud~ / ~git~ / ~bws~.
+
+* Bootstrap (one-time)
+
+** Bitwarden Secrets Manager
+
+- A /project/ (e.g. ~rotato~) holding a /secret/ = the credential's current
+  value. Seed it with a freshly-created, still-valid token. Note its *UUID*.
+- A ~rotator~ machine account with *read+write* on that project → its access
+  token is ~BWS_ACCESS_TOKEN~ (the bootstrap secret).
+- A separate *read-only* machine account per consumer (laptop, VM).
+
+For a GitLab PAT specifically, give the token the ~api~ scope (covers git
+push/pull, the API incl. opening MRs, and self-rotation) with an expiry that
+matches ~EXPIRY_DAYS~. Without ~api~ / ~self_rotate~, rotation returns 403.
+
+** Deploy
+
+One env file holds everything. ~BWS_ACCESS_TOKEN~ is the only secret in it and is
+needed *only to bootstrap* — ~setup.sh~ uploads it to Secret Manager, after which
+the job reads it from there and you can blank it locally.
+
+#+begin_src bash
+cp deploy/rotato.env.example deploy/rotato.env   # fill: project, token, secret UUID, ALERT_EMAIL
+deploy/run.sh                                    # setup + add-rotator + add-alert, end to end
+gcloud run jobs execute rotato-gitlab-pat --region <REGION> --wait   # smoke test (rotates for real)
+#+end_src
+
+~run.sh~ just chains ~setup.sh~ → ~add-rotator.sh~ → ~add-alert.sh~; run them
+separately if you prefer. All accept an optional env-file path (default
+~deploy/rotato.env~) and are *idempotent* — safe to re-run to rebuild the image,
+change the schedule, or replace the bootstrap token. After the smoke test
+confirms a rotation, blank ~BWS_ACCESS_TOKEN~ in ~rotato.env~ (Secret Manager
+holds it now).
+
+* Consuming the secret (laptop / VM)
+
+Each consumer fetches the *current* value from Bitwarden on demand, so the PAT is
+never written to disk and rotations are transparent. Run once per machine (needs
+~bws~ + ~jq~):
+
+#+begin_src bash
+consumer/install.sh <secret-uuid> --user <git-user>   # add --dry-run to preview
+#+end_src
+
+It stores this machine's read-only BWS token at =~/.config/rotato/token=
+(chmod 600), installs ~rotato-fetch~ + ~rotato-git-credential~ into =~/.local/bin=,
+and points git at the helper for the host (default ~gitlab.com~; override with
+~--host~, or ~--file~ to pin which git-config file it writes).
+
+- /Another git host/ (a second GitLab, a GitHub PAT): reuse the same helper —
+  rerun ~install.sh <other-uuid> --host <host> --user <user>~.
+- /A non-git credential/: call the primitive directly, e.g.
+  ~export SOME_KEY="$(rotato-fetch <uuid>)"~.
+
+* Add a new rotator
+
+A rotator is a small module exposing ~run(store)~; ~rotate_secret~ handles the
+read → write → verify, so you only implement "given the old value, produce the
+new one."
+
+1. Write ~src/rotato/rotators/<name>.py~:
+
+   #+begin_src python
+   import os
+   from ..core import SecretStore, rotate_secret
+
+   def _rotate(old: str) -> str:
+       # call the provider with `old`, do whatever mint/revoke dance it needs,
+       # and return the NEW secret value.
+       ...
+
+   def run(store: SecretStore) -> None:
+       rotate_secret(store, os.environ["MYSECRET_ID"], _rotate)
+   #+end_src
+
+   Add a colocated ~<name>_test.py~ next to it (mock the provider + a fake store).
+
+2. Register it in ~src/rotato/rotators/__init__.py~:
+
+   #+begin_src python
+   from . import gitlab_pat, myrotator
+   REGISTRY = {"gitlab-pat": gitlab_pat.run, "myrotator": myrotator.run}
+   #+end_src
+
+3. Rebuild the image so the new module ships: ~deploy/setup.sh~.
+
+4. Deploy its job + schedule. Copy ~deploy/rotato.env~ to ~deploy/<name>.env~,
+   edit the rotator section (~ROTATOR~, ~SCHEDULE~, its secret id, ~ROTATOR_ENV~),
+   then ~deploy/add-rotator.sh deploy/<name>.env~.
+
+The Cloud Run job's entrypoint is ~rotato <name>~, so ~ROTATOR~ selects which
+rotator runs.
+
+* Development & tests
+
+Dependencies are managed with [[https://docs.astral.sh/uv/][uv]] — runtime deps in ~[project.dependencies]~;
+~pytest~, ~ruff~, ~pylint~ in the ~dev~ group; pinned in ~uv.lock~. The interpreter
+is pinned to 3.14 via ~.python-version~.
+
+#+begin_src bash
+uv sync                     # create .venv from the lockfile
+uv run pytest               # tests (colocated *_test.py, found via config)
+uv run ruff format          # format (80 cols, to match pylint)
+uv run ruff check           # lint + import sort
+uv run pylint src/rotato --ignore-patterns='.*_test\.py'   # Google config
+#+end_src
+
+~.pylintrc~ is Google's [[https://google.github.io/styleguide/pylintrc][published config]], used verbatim. Each module has a
+colocated ~<name>_test.py~ (Google style): pytest finds them via ~python_files~,
+they're excluded from pylint, and stripped from the Docker image. Tests mock the
+Bitwarden client and the GitLab HTTP call, so they touch no real service. CI
+(~.github/workflows/ci.yml~) runs the same four gates on push and PRs.
+
+* Layout
+
+#+begin_example
+src/rotato/cli.py                dispatcher: the rotato console script
+src/rotato/core.py               rotate_secret: read -> rotate -> write -> verify
+src/rotato/bws.py                Bitwarden Secrets Manager client (get/set value)
+src/rotato/rotators/<name>.py    per-secret logic; exposes run(store)
+src/rotato/rotators/__init__.py  name -> rotator registry
+src/rotato/**/*_test.py          colocated pytest tests (foo.py -> foo_test.py)
+Dockerfile                       multi-stage: uv builds the venv; runs on python:3.14, non-root
+deploy/rotato.env(.example)      the one fill-in-and-run config (gitignored: rotato.env)
+deploy/setup.sh                  one-time shared infra (APIs, registry, image, SAs)
+deploy/add-rotator.sh            one Cloud Run job + scheduler per secret
+deploy/add-alert.sh              email alert on a rotator's failed executions
+deploy/run.sh                    setup + add-rotator + add-alert, end to end
+consumer/rotato-fetch            read a secret value, read-only (bash)
+consumer/rotato-git-credential   git credential helper over rotato-fetch
+consumer/install.sh              one-time per-machine consumer setup
+#+end_example
