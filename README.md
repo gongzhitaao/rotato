@@ -41,7 +41,10 @@ deploy/setup.sh               one-time shared infra (APIs, registry, image, SAs)
 deploy/add-rotator.sh         one Cloud Run job + scheduler per secret
 deploy/add-alert.sh           email alert on a rotator's failed executions
 deploy/run.sh                 setup + add-rotator + add-alert, end to end
-tests/                        pytest suite (tests/run.sh runs it via uv/venv)
+consumer/rotato-fetch         read a secret value, read-only (bash)
+consumer/rotato-git-credential  git credential helper over rotato-fetch
+consumer/install.sh           one-time per-machine consumer setup
+tests/                        pytest suite (uv run pytest)
 ```
 
 The rotation core is Python (real error handling, the Bitwarden SDK, mockable
@@ -114,15 +117,20 @@ without touching any real service.
 
 ## Consuming the secret (laptop / VM)
 
-Install `bws`, place a **read-only** machine-account token, and point git at a
-credential helper that fetches on demand:
+Each consumer machine fetches the **current** value from Bitwarden on demand, so
+the PAT is never written to disk and rotations are transparent. Run once per
+machine (needs `bws` + `jq`):
 
-```gitconfig
-[credential "https://gitlab.com"]
-    username = <user>
-    helper = "!f() { test \"$1\" = get && \
-      echo \"password=$(BWS_ACCESS_TOKEN=$(cat ~/.config/bws/token) \
-      bws secret get $GITLAB_PAT_SECRET_ID | jq -r .value)\"; }; f"
+```bash
+consumer/install.sh <secret-uuid> --user <git-user>   # add --dry-run to preview
 ```
 
-The PAT is never written to disk and automatically tracks rotations.
+It stores this machine's **read-only** BWS token at `~/.config/rotato/token`
+(chmod 600), installs `rotato-fetch` + `rotato-git-credential` into
+`~/.local/bin`, and points git at the helper for the host (default
+`gitlab.com`; override with `--host`).
+
+- **Another git host** (a second GitLab, a GitHub PAT): reuse the same helper —
+  rerun `install.sh <other-uuid> --host <host> --user <user>`.
+- **A non-git credential**: call the primitive directly, e.g.
+  `export SOME_KEY="$(rotato-fetch <uuid>)"`.
