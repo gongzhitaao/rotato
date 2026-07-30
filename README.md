@@ -34,46 +34,47 @@ rotato.sh                     dispatcher: runs rotators/<name>.sh
 lib/common.sh                 rotato_run: bws read -> rotate -> write -> verify
 rotators/<name>.sh            per-secret logic; defines rotato_main
 Dockerfile                    debian + bws + jq + curl
-deploy/config.env(.example)   GCP project/region (gitignored: config.env)
+deploy/rotato.env(.example)   the one fill-in-and-run config (gitignored: rotato.env)
 deploy/setup.sh               one-time shared infra (APIs, registry, image, SAs)
 deploy/add-rotator.sh         one Cloud Run job + scheduler per secret
-deploy/rotators/<name>.env    per-secret deploy config (gitignored)
+deploy/run.sh                 setup.sh + add-rotator.sh, end to end
 ```
 
-## Prerequisites (per secret)
+## Prerequisites
 
 In Bitwarden Secrets Manager:
 1. A **secret** holding the current credential — note its UUID.
-2. A **`rotator` machine account** with **read+write** on that secret's project.
+2. A **`rotator` machine account** with **read+write** on that secret's project
+   → its access token is the bootstrap secret (`BWS_ACCESS_TOKEN`).
 3. Separate **read-only** machine accounts for each consumer (laptop, VM).
 
 For the GitLab PAT specifically, the token needs **`api`** scope (or
 `self_rotate` on GitLab ≥ 17.7) or self-rotation returns 403.
 
-## One-time setup
+## Deploy
+
+One env file holds everything. The only secret in it is `BWS_ACCESS_TOKEN`, and
+it is needed **only to bootstrap** — `setup.sh` uploads it to Secret Manager,
+after which the job reads it from there and you can blank it locally.
 
 ```bash
-cp deploy/config.env.example deploy/config.env    # edit project/region
-deploy/setup.sh                                    # prompts for the rotator BWS token
-```
-
-## Add a rotator
-
-```bash
-cp deploy/rotators/gitlab-pat.env.example deploy/rotators/gitlab-pat.env
-# edit: GITLAB_PAT_SECRET_ID, SCHEDULE, TIME_ZONE
-deploy/add-rotator.sh deploy/rotators/gitlab-pat.env
+cp deploy/rotato.env.example deploy/rotato.env   # fill in project, token, secret UUID
+deploy/run.sh                                    # setup + deploy the rotator
 gcloud run jobs execute rotato-gitlab-pat --region <REGION> --wait   # smoke test
 ```
 
-## Add a new *kind* of secret
+`run.sh` is just `setup.sh` then `add-rotator.sh`; run them separately if you
+prefer. Both accept an optional env-file path (default `deploy/rotato.env`).
 
-Write `rotators/<name>.sh` defining `rotato_main`, which calls
-`rotato_run <secret_id> <rotate_fn>`. `rotate_fn` receives the old value on
-`$1` and must print the new value to stdout (doing whatever provider-specific
-mint/revoke dance is required). Then create `deploy/rotators/<name>.env` and run
-`deploy/add-rotator.sh`. Rebuild the shared image with `deploy/setup.sh` so the
-new script ships in the container.
+## Add another secret
+
+1. Write `rotators/<name>.sh` defining `rotato_main`, which calls
+   `rotato_run <secret_id> <rotate_fn>`. `rotate_fn` receives the old value on
+   `$1` and prints the new value to stdout (doing whatever provider-specific
+   mint/revoke dance is required).
+2. `deploy/setup.sh` once more to rebuild the image with the new script.
+3. Copy `deploy/rotato.env` to `deploy/<name>.env`, edit the rotator section,
+   then `deploy/add-rotator.sh deploy/<name>.env`.
 
 ## Consuming the secret (laptop / VM)
 

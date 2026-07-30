@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
 # Deploy (or update) one rotator: a Cloud Run job + a Cloud Scheduler trigger.
-# Usage: deploy/add-rotator.sh deploy/rotators/<name>.env
+# Does NOT need BWS_ACCESS_TOKEN — the job reads it from Secret Manager.
+# Usage: deploy/add-rotator.sh [env-file]   (default: deploy/rotato.env)
 # Idempotent — re-run to change schedule/env or after rebuilding the image.
 set -euo pipefail
 
 HERE=$(dirname "$(readlink -f "$0")")
-# shellcheck source=/dev/null
-source "$HERE/config.env"
-
-ENVFILE="${1:?usage: add-rotator.sh <rotator-env-file>}"
+ENVFILE="${1:-$HERE/rotato.env}"
+[ -f "$ENVFILE" ] || { echo "no env file: ${ENVFILE} (copy rotato.env.example)" >&2; exit 1; }
 # shellcheck source=/dev/null
 source "$ENVFILE"
-: "${ROTATOR:?env file must set ROTATOR}"
-: "${SCHEDULE:?env file must set SCHEDULE}"
-: "${TIME_ZONE:?env file must set TIME_ZONE}"
+: "${PROJECT_ID:?}"; : "${REGION:?}"; : "${REPO:?}"; : "${IMAGE_NAME:?}"
+: "${ROTATOR:?}"; : "${SCHEDULE:?}"; : "${TIME_ZONE:?}"
 
 IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${IMAGE_NAME}:latest"
 JOB_SA="rotato-job@${PROJECT_ID}.iam.gserviceaccount.com"
