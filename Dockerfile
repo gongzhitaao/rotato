@@ -1,5 +1,5 @@
 # ---- build: install locked deps + project into /app/.venv with uv ----
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS build
+FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim AS build
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
@@ -15,7 +15,7 @@ RUN find src -name '*_test.py' -delete \
     && uv sync --frozen --no-dev
 
 # ---- runtime: slim base, non-root, just the venv ----
-FROM python:3.12-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 RUN useradd --create-home --uid 10001 rotato
 COPY --from=build --chown=rotato:rotato /app /app
