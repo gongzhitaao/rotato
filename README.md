@@ -92,15 +92,20 @@ skip alerting.
 3. Copy `deploy/rotato.env` to `deploy/<name>.env`, edit the rotator section,
    then `deploy/add-rotator.sh deploy/<name>.env`.
 
-## Tests
+## Development & tests
+
+Dependencies are managed with [uv](https://docs.astral.sh/uv/) — runtime deps in
+`[project.dependencies]`, `pytest` in the `dev` group, pinned in `uv.lock`.
 
 ```bash
-tests/run.sh    # uses uv if present, else a stdlib venv; installs pytest + httpx
+uv sync                 # create .venv from the lockfile
+uv add <pkg>            # add a runtime dep;  uv add --dev <pkg> for tooling
+tests/run.sh            # run pytest (equivalent to: uv run pytest)
 ```
 
-Tests mock the Bitwarden client and GitLab HTTP call, covering the framework,
-the gitlab-pat rotator, and the write-back verify / break-glass path without
-touching any real service or needing the Bitwarden SDK installed.
+Tests mock the Bitwarden client and the GitLab HTTP call, covering the
+framework, the gitlab-pat rotator, and the write-back verify / break-glass path
+without touching any real service.
 
 ## Consuming the secret (laptop / VM)
 

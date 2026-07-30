@@ -4,12 +4,9 @@ version = "0.1.0"
 description = "Serverless secret/key rotation into Bitwarden Secrets Manager"
 requires-python = ">=3.10"
 dependencies = [
-    "bitwarden-sdk",
-    "httpx",
+    "bitwarden-sdk>=2.1.0",
+    "httpx>=0.28.1",
 ]
-
-[project.optional-dependencies]
-test = ["pytest", "httpx"]
 
 [build-system]
 requires = ["setuptools>=61"]
@@ -17,3 +14,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["rotato*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

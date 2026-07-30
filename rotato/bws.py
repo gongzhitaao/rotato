@@ -46,13 +46,15 @@ class BwsClient:
 
     def get(self, secret_id: str) -> Secret:
         data = self._client.secrets().get(secret_id).data
+        # ids come back as UUID objects; coerce to str so they serialize cleanly
+        # when passed back to update().
         return Secret(
-            id=data.id,
+            id=str(data.id),
             key=data.key,
             value=data.value,
             note=data.note or "",
-            organization_id=data.organization_id,
-            project_id=data.project_id,
+            organization_id=str(data.organization_id),
+            project_id=str(data.project_id) if data.project_id else None,
         )
 
     def get_value(self, secret_id: str) -> str:
