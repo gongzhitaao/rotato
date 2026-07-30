@@ -1,0 +1,5 @@
+# Concrete deploy config — may contain project ids / secret UUIDs.
+# Only the *.example templates are committed.
+deploy/config.env
+deploy/rotators/*.env
+!deploy/rotators/*.env.example
