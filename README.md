@@ -30,11 +30,11 @@ Cloud Scheduler (cron)  ──►  Cloud Run job  ──►  rotate at provider
 ## Layout
 
 ```
-rotato/cli.py                 dispatcher: the `rotato` console script
-rotato/core.py                rotate_secret: read -> rotate -> write -> verify
-rotato/bws.py                 Bitwarden Secrets Manager client (get/set value)
-rotato/rotators/<name>.py     per-secret logic; exposes run(store)
-rotato/rotators/__init__.py   name -> rotator registry
+src/rotato/cli.py             dispatcher: the `rotato` console script
+src/rotato/core.py            rotate_secret: read -> rotate -> write -> verify
+src/rotato/bws.py             Bitwarden Secrets Manager client (get/set value)
+src/rotato/rotators/<name>.py per-secret logic; exposes run(store)
+src/rotato/rotators/__init__.py  name -> rotator registry
 Dockerfile                    python:3.12-slim + the rotato package
 deploy/rotato.env(.example)   the one fill-in-and-run config (gitignored: rotato.env)
 deploy/setup.sh               one-time shared infra (APIs, registry, image, SAs)
@@ -87,10 +87,10 @@ skip alerting.
 
 ## Add another secret
 
-1. Write `rotato/rotators/<name>.py` exposing `run(store)`, which calls
+1. Write `src/rotato/rotators/<name>.py` exposing `run(store)`, which calls
    `rotate_secret(store, secret_id, rotate_fn)`. `rotate_fn` receives the old
    value and returns the new one (doing whatever provider-specific mint/revoke
-   dance is required). Register it by name in `rotato/rotators/__init__.py`.
+   dance is required). Register it in `src/rotato/rotators/__init__.py`.
 2. `deploy/setup.sh` once more to rebuild the image with the new module.
 3. Copy `deploy/rotato.env` to `deploy/<name>.env`, edit the rotator section,
    then `deploy/add-rotator.sh deploy/<name>.env`.
@@ -106,7 +106,7 @@ uv sync                     # create .venv from the lockfile
 uv run pytest               # tests
 uv run ruff format          # format (80 cols, to match pylint)
 uv run ruff check           # lint + import sort
-uv run pylint rotato        # lint with Google's config (.pylintrc)
+uv run pylint src/rotato    # lint with Google's config (.pylintrc)
 ```
 
 Ruff and pytest config live in `pyproject.toml`; `.pylintrc` is Google's

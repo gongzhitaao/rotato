@@ -15,10 +15,10 @@ jobs:
           enable-cache: true
       - run: uv sync --frozen
       - name: ruff format
-        run: uv run ruff format --check rotato tests
+        run: uv run ruff format --check src tests
       - name: ruff lint
-        run: uv run ruff check rotato tests
+        run: uv run ruff check src tests
       - name: pylint
-        run: uv run pylint rotato
+        run: uv run pylint src/rotato
       - name: pytest
         run: uv run pytest
