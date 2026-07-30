@@ -8,3 +8,4 @@ ENVFILE="${1:-$HERE/rotato.env}"
 
 "$HERE/setup.sh"        "$ENVFILE"
 "$HERE/add-rotator.sh"  "$ENVFILE"
+"$HERE/add-alert.sh"    "$ENVFILE"

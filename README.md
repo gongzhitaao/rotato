@@ -37,8 +37,14 @@ Dockerfile                    debian + bws + jq + curl
 deploy/rotato.env(.example)   the one fill-in-and-run config (gitignored: rotato.env)
 deploy/setup.sh               one-time shared infra (APIs, registry, image, SAs)
 deploy/add-rotator.sh         one Cloud Run job + scheduler per secret
-deploy/run.sh                 setup.sh + add-rotator.sh, end to end
+deploy/add-alert.sh           email alert on a rotator's failed executions
+deploy/run.sh                 setup + add-rotator + add-alert, end to end
+test/                         bats unit tests (test/run.sh installs bats if needed)
 ```
+
+All `deploy/*` scripts are **idempotent** — re-run any of them to change the
+schedule, rebuild the image, or replace the bootstrap token without creating
+duplicates.
 
 ## Prerequisites
 
@@ -63,8 +69,13 @@ deploy/run.sh                                    # setup + deploy the rotator
 gcloud run jobs execute rotato-gitlab-pat --region <REGION> --wait   # smoke test
 ```
 
-`run.sh` is just `setup.sh` then `add-rotator.sh`; run them separately if you
-prefer. Both accept an optional env-file path (default `deploy/rotato.env`).
+`run.sh` chains `setup.sh`, `add-rotator.sh`, and `add-alert.sh`; run them
+separately if you prefer. All accept an optional env-file path (default
+`deploy/rotato.env`).
+
+Set `ALERT_EMAIL` in the env file to be emailed when a rotation job fails —
+without it a failed run is silent until the token expires. Leave it blank to
+skip alerting.
 
 ## Add another secret
 
@@ -75,6 +86,16 @@ prefer. Both accept an optional env-file path (default `deploy/rotato.env`).
 2. `deploy/setup.sh` once more to rebuild the image with the new script.
 3. Copy `deploy/rotato.env` to `deploy/<name>.env`, edit the rotator section,
    then `deploy/add-rotator.sh deploy/<name>.env`.
+
+## Tests
+
+```bash
+test/run.sh    # installs bats via 'npm install -g bats' if missing; needs jq
+```
+
+Stubs for `bws`/`curl` (`test/bin/`) exercise the framework, the gitlab-pat
+rotator, and the write-back verify / break-glass path without touching any real
+service.
 
 ## Consuming the secret (laptop / VM)
 

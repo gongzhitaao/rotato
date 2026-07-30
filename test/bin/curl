@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Test stub for curl. Returns a canned GitLab rotate response.
+#   CURL_STUB_MODE=ok   (default) -> prints {"token":"NEWTOKEN"}, exit 0
+#   CURL_STUB_MODE=fail           -> prints error to stderr, exit 22
+set -euo pipefail
+case "${CURL_STUB_MODE:-ok}" in
+  ok)   printf '{"token":"NEWTOKEN"}' ;;
+  fail) echo "curl stub: simulated failure" >&2; exit 22 ;;
+  *)    echo "curl stub: unknown mode" >&2; exit 2 ;;
+esac
