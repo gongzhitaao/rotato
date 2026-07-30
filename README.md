@@ -35,6 +35,7 @@ src/rotato/core.py            rotate_secret: read -> rotate -> write -> verify
 src/rotato/bws.py             Bitwarden Secrets Manager client (get/set value)
 src/rotato/rotators/<name>.py per-secret logic; exposes run(store)
 src/rotato/rotators/__init__.py  name -> rotator registry
+src/rotato/**/*_test.py       colocated pytest tests (foo.py -> foo_test.py)
 Dockerfile                    python:3.12-slim + the rotato package
 deploy/rotato.env(.example)   the one fill-in-and-run config (gitignored: rotato.env)
 deploy/setup.sh               one-time shared infra (APIs, registry, image, SAs)
@@ -44,7 +45,6 @@ deploy/run.sh                 setup + add-rotator + add-alert, end to end
 consumer/rotato-fetch         read a secret value, read-only (bash)
 consumer/rotato-git-credential  git credential helper over rotato-fetch
 consumer/install.sh           one-time per-machine consumer setup
-tests/                        pytest suite (uv run pytest)
 ```
 
 The rotation core is Python (real error handling, the Bitwarden SDK, mockable
@@ -103,17 +103,19 @@ pinned in `uv.lock`.
 
 ```bash
 uv sync                     # create .venv from the lockfile
-uv run pytest               # tests
+uv run pytest               # tests (colocated *_test.py, found via config)
 uv run ruff format          # format (80 cols, to match pylint)
 uv run ruff check           # lint + import sort
-uv run pylint src/rotato    # lint with Google's config (.pylintrc)
+uv run pylint src/rotato --ignore-patterns='.*_test\.py'   # Google config
 ```
 
 Ruff and pytest config live in `pyproject.toml`; `.pylintrc` is Google's
 [published config](https://google.github.io/styleguide/pylintrc), used verbatim.
-Tests mock the Bitwarden client and the GitLab HTTP call, so they cover the
-framework, the gitlab-pat rotator, and the write-back verify / break-glass path
-without touching any real service.
+Each module has a colocated `<name>_test.py` (Google style); pytest finds them
+via `python_files`, they're excluded from pylint, and stripped from the Docker
+image. Tests mock the Bitwarden client and the GitLab HTTP call, so they cover
+the framework, the gitlab-pat rotator, and the write-back verify / break-glass
+path without touching any real service.
 
 ## Consuming the secret (laptop / VM)
 

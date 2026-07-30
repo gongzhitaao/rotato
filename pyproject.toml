@@ -27,12 +27,14 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["src"]
+python_files = ["*_test.py"]
+addopts = "--import-mode=importlib"
 
 [tool.ruff]
 line-length = 80          # match Google's pylintrc max-line-length
 target-version = "py310"
-src = ["src", "tests"]    # first-party roots for import sorting
+src = ["src"]             # first-party root for import sorting
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
