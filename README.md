@@ -30,17 +30,22 @@ Cloud Scheduler (cron)  ──►  Cloud Run job  ──►  rotate at provider
 ## Layout
 
 ```
-rotato.sh                     dispatcher: runs rotators/<name>.sh
-lib/common.sh                 rotato_run: bws read -> rotate -> write -> verify
-rotators/<name>.sh            per-secret logic; defines rotato_main
-Dockerfile                    debian + bws + jq + curl
+rotato/__main__.py            dispatcher: python -m rotato <name>
+rotato/core.py                rotate_secret: read -> rotate -> write -> verify
+rotato/bws.py                 Bitwarden Secrets Manager client (get/set value)
+rotato/rotators/<name>.py     per-secret logic; exposes run(store)
+rotato/rotators/__init__.py   name -> rotator registry
+Dockerfile                    python:3.12-slim + the rotato package
 deploy/rotato.env(.example)   the one fill-in-and-run config (gitignored: rotato.env)
 deploy/setup.sh               one-time shared infra (APIs, registry, image, SAs)
 deploy/add-rotator.sh         one Cloud Run job + scheduler per secret
 deploy/add-alert.sh           email alert on a rotator's failed executions
 deploy/run.sh                 setup + add-rotator + add-alert, end to end
-test/                         bats unit tests (test/run.sh installs bats if needed)
+tests/                        pytest suite (tests/run.sh runs it via uv/venv)
 ```
+
+The rotation core is Python (real error handling, the Bitwarden SDK, mockable
+tests); the `deploy/*` scripts stay bash since they only orchestrate `gcloud`.
 
 All `deploy/*` scripts are **idempotent** — re-run any of them to change the
 schedule, rebuild the image, or replace the bootstrap token without creating
@@ -79,23 +84,23 @@ skip alerting.
 
 ## Add another secret
 
-1. Write `rotators/<name>.sh` defining `rotato_main`, which calls
-   `rotato_run <secret_id> <rotate_fn>`. `rotate_fn` receives the old value on
-   `$1` and prints the new value to stdout (doing whatever provider-specific
-   mint/revoke dance is required).
-2. `deploy/setup.sh` once more to rebuild the image with the new script.
+1. Write `rotato/rotators/<name>.py` exposing `run(store)`, which calls
+   `rotate_secret(store, secret_id, rotate_fn)`. `rotate_fn` receives the old
+   value and returns the new one (doing whatever provider-specific mint/revoke
+   dance is required). Register it by name in `rotato/rotators/__init__.py`.
+2. `deploy/setup.sh` once more to rebuild the image with the new module.
 3. Copy `deploy/rotato.env` to `deploy/<name>.env`, edit the rotator section,
    then `deploy/add-rotator.sh deploy/<name>.env`.
 
 ## Tests
 
 ```bash
-test/run.sh    # installs bats via 'npm install -g bats' if missing; needs jq
+tests/run.sh    # uses uv if present, else a stdlib venv; installs pytest + httpx
 ```
 
-Stubs for `bws`/`curl` (`test/bin/`) exercise the framework, the gitlab-pat
-rotator, and the write-back verify / break-glass path without touching any real
-service.
+Tests mock the Bitwarden client and GitLab HTTP call, covering the framework,
+the gitlab-pat rotator, and the write-back verify / break-glass path without
+touching any real service or needing the Bitwarden SDK installed.
 
 ## Consuming the secret (laptop / VM)
 

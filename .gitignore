@@ -2,3 +2,9 @@
 # Only the *.example template is committed.
 deploy/*.env
 !deploy/*.env.example
+
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
