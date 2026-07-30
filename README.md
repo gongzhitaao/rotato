@@ -30,7 +30,7 @@ Cloud Scheduler (cron)  ──►  Cloud Run job  ──►  rotate at provider
 ## Layout
 
 ```
-rotato/__main__.py            dispatcher: python -m rotato <name>
+rotato/cli.py                 dispatcher: the `rotato` console script
 rotato/core.py                rotate_secret: read -> rotate -> write -> verify
 rotato/bws.py                 Bitwarden Secrets Manager client (get/set value)
 rotato/rotators/<name>.py     per-secret logic; exposes run(store)

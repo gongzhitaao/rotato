@@ -1,12 +1,18 @@
 """Thin wrapper over the Bitwarden Secrets Manager SDK.
 
-Isolated here so the rest of rotato depends only on get_value/set_value, and so
-the SDK is imported lazily (tests use a fake store and never import it).
-Verify the method signatures against your installed `bitwarden-sdk` version.
+Isolated here so the rest of rotato depends only on get_value / set_value.
+Validated against bitwarden-sdk 2.1.0 (see the pin in pyproject); re-check the
+method signatures if you bump it.
 """
 
 import os
 from dataclasses import dataclass
+
+from bitwarden_sdk import (
+    BitwardenClient,
+    DeviceType,
+    client_settings_from_dict,
+)
 
 
 @dataclass
@@ -23,14 +29,6 @@ class BwsClient:
     """Reads/writes a single secret's value in Bitwarden Secrets Manager."""
 
     def __init__(self, access_token: str | None = None):
-        # Lazy import: keeps the SDK out of the test path, which mocks this
-        # client, and off the import graph until a rotation actually runs.
-        from bitwarden_sdk import (  # pylint: disable=import-outside-toplevel
-            BitwardenClient,
-            DeviceType,
-            client_settings_from_dict,
-        )
-
         self._client = BitwardenClient(
             client_settings_from_dict(
                 {
@@ -50,8 +48,8 @@ class BwsClient:
 
     def get(self, secret_id: str) -> Secret:
         data = self._client.secrets().get(secret_id).data
-        # ids come back as UUID objects; coerce to str so they serialize cleanly
-        # when passed back to update().
+        # ids come back as UUID objects; coerce to str so they serialize
+        # cleanly when passed back to update().
         return Secret(
             id=str(data.id),
             key=data.key,

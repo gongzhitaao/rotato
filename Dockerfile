@@ -5,4 +5,4 @@ COPY pyproject.toml ./
 COPY rotato ./rotato
 RUN pip install --no-cache-dir .
 
-ENTRYPOINT ["python", "-m", "rotato"]
+ENTRYPOINT ["rotato"]

@@ -1,4 +1,4 @@
-from rotato.__main__ import main
+from rotato.cli import main
 
 
 def test_unknown_rotator_returns_2(capsys):
