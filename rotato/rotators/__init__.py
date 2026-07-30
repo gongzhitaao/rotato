@@ -1,4 +1,5 @@
-"""Rotator registry. Add a module exposing run(store) and register it by name."""
+"""Registry mapping rotator name -> run(store)."""
+
 from . import gitlab_pat
 
 REGISTRY = {

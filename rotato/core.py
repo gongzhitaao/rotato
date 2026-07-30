@@ -1,5 +1,7 @@
 """Rotation framework: read -> rotate -> write -> verify."""
-from typing import Callable, Protocol
+
+from collections.abc import Callable
+from typing import Protocol
 
 
 class SecretStore(Protocol):
@@ -27,7 +29,9 @@ def rotate_secret(
 
     new = rotate_fn(old)
     if not new:
-        raise RotationError(f"rotate function produced no new value for {secret_id}")
+        raise RotationError(
+            f"rotate function produced no new value for {secret_id}"
+        )
 
     store.set_value(secret_id, new)
 

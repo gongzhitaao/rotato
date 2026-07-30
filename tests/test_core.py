@@ -12,7 +12,7 @@ class FakeStore:
         return self._v.get(sid, "")
 
     def set_value(self, sid, value):
-        if not self._readonly:   # readonly models a write that silently fails
+        if not self._readonly:  # readonly models a write that silently fails
             self._v[sid] = value
 
 

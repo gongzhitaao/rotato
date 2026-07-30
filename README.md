@@ -95,15 +95,20 @@ skip alerting.
 ## Development & tests
 
 Dependencies are managed with [uv](https://docs.astral.sh/uv/) — runtime deps in
-`[project.dependencies]`, `pytest` in the `dev` group, pinned in `uv.lock`.
+`[project.dependencies]`; `pytest`, `ruff`, and `pylint` in the `dev` group; all
+pinned in `uv.lock`.
 
 ```bash
-uv sync                 # create .venv from the lockfile
-uv add <pkg>            # add a runtime dep;  uv add --dev <pkg> for tooling
-tests/run.sh            # run pytest (equivalent to: uv run pytest)
+uv sync                     # create .venv from the lockfile
+uv run pytest               # tests
+uv run ruff format          # format (80 cols, to match pylint)
+uv run ruff check           # lint + import sort
+uv run pylint rotato        # lint with Google's config (.pylintrc)
 ```
 
-Tests mock the Bitwarden client and the GitLab HTTP call, covering the
+Ruff and pytest config live in `pyproject.toml`; `.pylintrc` is Google's
+[published config](https://google.github.io/styleguide/pylintrc), used verbatim.
+Tests mock the Bitwarden client and the GitLab HTTP call, so they cover the
 framework, the gitlab-pat rotator, and the write-back verify / break-glass path
 without touching any real service.
 

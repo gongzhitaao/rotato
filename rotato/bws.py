@@ -4,9 +4,9 @@ Isolated here so the rest of rotato depends only on get_value/set_value, and so
 the SDK is imported lazily (tests use a fake store and never import it).
 Verify the method signatures against your installed `bitwarden-sdk` version.
 """
+
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -16,14 +16,16 @@ class Secret:
     value: str
     note: str
     organization_id: str
-    project_id: Optional[str]
+    project_id: str | None
 
 
 class BwsClient:
     """Reads/writes a single secret's value in Bitwarden Secrets Manager."""
 
-    def __init__(self, access_token: Optional[str] = None):
-        from bitwarden_sdk import (
+    def __init__(self, access_token: str | None = None):
+        # Lazy import: keeps the SDK out of the test path, which mocks this
+        # client, and off the import graph until a rotation actually runs.
+        from bitwarden_sdk import (  # pylint: disable=import-outside-toplevel
             BitwardenClient,
             DeviceType,
             client_settings_from_dict,
@@ -32,7 +34,9 @@ class BwsClient:
         self._client = BitwardenClient(
             client_settings_from_dict(
                 {
-                    "apiUrl": os.environ.get("BWS_API_URL", "https://api.bitwarden.com"),
+                    "apiUrl": os.environ.get(
+                        "BWS_API_URL", "https://api.bitwarden.com"
+                    ),
                     "identityUrl": os.environ.get(
                         "BWS_IDENTITY_URL", "https://identity.bitwarden.com"
                     ),

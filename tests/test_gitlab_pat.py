@@ -12,7 +12,9 @@ def _resp(status, json=None, url="https://gitlab.com/x"):
 
 
 def test_rotate_returns_token(monkeypatch):
-    monkeypatch.setattr(gp.httpx, "post", lambda url, **k: _resp(200, {"token": "NEWTOKEN"}))
+    monkeypatch.setattr(
+        gp.httpx, "post", lambda url, **k: _resp(200, {"token": "NEWTOKEN"})
+    )
     assert gp._rotate("OLD") == "NEWTOKEN"
 
 
@@ -34,7 +36,9 @@ class _FakeStore:
 
 
 def test_run_end_to_end(monkeypatch):
-    monkeypatch.setattr(gp.httpx, "post", lambda url, **k: _resp(200, {"token": "NEWTOKEN"}))
+    monkeypatch.setattr(
+        gp.httpx, "post", lambda url, **k: _resp(200, {"token": "NEWTOKEN"})
+    )
     monkeypatch.setenv("GITLAB_PAT_SECRET_ID", "sid")
     store = _FakeStore("OLD")
     gp.run(store)
