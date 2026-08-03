@@ -98,10 +98,30 @@ It stores this machine's read-only BWS token at =~/.config/rotato/token=
 and points git at the helper for the host (default ~gitlab.com~; override with
 ~--host~, or ~--file~ to pin which git-config file it writes).
 
-- /Another git host/ (a second GitLab, a GitHub PAT): reuse the same helper —
-  rerun ~install.sh <other-uuid> --host <host> --user <user>~.
+- /Another git host/ (a second GitLab, an OAuth-app token): reuse the same
+  helper — rerun ~install.sh <other-uuid> --host <host> --user <user>~.
 - /A non-git credential/: call the primitive directly, e.g.
   ~export SOME_KEY="$(rotato-fetch <uuid>)"~.
+
+*** GitHub App (no self-rotating PAT)
+
+GitHub user PATs can't rotate themselves, so GitHub uses a /GitHub App/: the
+standing secret is the App's *private key* (in Bitwarden), and each git op mints
+a fresh ~1h *installation token* from it — nothing long-lived hits disk and
+there is no scheduled rotator job. Per machine, generate a separate private key
+in the App (so you can revoke one machine without re-keying the rest) and seed
+its PEM as a Bitwarden secret. Then:
+
+#+begin_src bash
+consumer/install.sh <pem-uuid> --github \
+    --app-id <app-or-client-id> --installation-id <installation-id>
+#+end_src
+
+This installs ~rotato-github-token~ alongside the others (needs ~openssl~ +
+~curl~), which signs the JWT and calls the installation-token endpoint;
+~rotato-git-credential --github~ emits it with username ~x-access-token~. The App
+ID and installation ID are not secret — ~install.sh~ embeds them in the git
+helper command. Scope the App tightly (specific repos, ~contents~ read/write).
 
 * Add a new rotator
 
@@ -178,6 +198,7 @@ deploy/add-rotator.sh            one Cloud Run job + scheduler per secret
 deploy/add-alert.sh              email alert on a rotator's failed executions
 deploy/run.sh                    setup + add-rotator + add-alert, end to end
 consumer/rotato-fetch            read a secret value, read-only (bash)
-consumer/rotato-git-credential   git credential helper over rotato-fetch
+consumer/rotato-github-token     mint a GitHub App installation token from a PEM
+consumer/rotato-git-credential   git credential helper (token or --github mode)
 consumer/install.sh              one-time per-machine consumer setup
 #+end_example
