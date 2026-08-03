@@ -5,17 +5,13 @@ Validated against bitwarden-sdk 2.1.0 (see the pin in pyproject); re-check the
 method signatures if you bump it.
 """
 
+import dataclasses
 import os
-from dataclasses import dataclass
 
-from bitwarden_sdk import (
-    BitwardenClient,
-    DeviceType,
-    client_settings_from_dict,
-)
+import bitwarden_sdk
 
 
-@dataclass
+@dataclasses.dataclass
 class Secret:
     id: str
     key: str
@@ -29,8 +25,8 @@ class BwsClient:
     """Reads/writes a single secret's value in Bitwarden Secrets Manager."""
 
     def __init__(self, access_token: str | None = None):
-        self._client = BitwardenClient(
-            client_settings_from_dict(
+        self._client = bitwarden_sdk.BitwardenClient(
+            bitwarden_sdk.client_settings_from_dict(
                 {
                     "apiUrl": os.environ.get(
                         "BWS_API_URL", "https://api.bitwarden.com"
@@ -38,7 +34,7 @@ class BwsClient:
                     "identityUrl": os.environ.get(
                         "BWS_IDENTITY_URL", "https://identity.bitwarden.com"
                     ),
-                    "deviceType": DeviceType.SDK,
+                    "deviceType": bitwarden_sdk.DeviceType.SDK,
                     "userAgent": "rotato",
                 }
             )

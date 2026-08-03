@@ -1,0 +1,29 @@
+# Local hooks that run the project's uv-pinned ruff + pylint, so the versions
+# match CI (.github/workflows/ci.yml) exactly. Install with:
+#   uv run pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types_or: [python]
+        require_serial: true
+
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types_or: [python]
+        require_serial: true
+
+      - id: pylint
+        name: pylint
+        # Run the exact CI command over the package, not per staged file, so
+        # cross-module checks and the _test.py ignore behave identically.
+        entry: uv run pylint src/rotato --ignore-patterns=.*_test\.py
+        language: system
+        files: '^src/rotato/.*\.py$'
+        pass_filenames: false
+        require_serial: true
