@@ -98,6 +98,16 @@ It stores this machine's read-only BWS token at =~/.config/rotato/token=
 and points git at the helper for the host (default ~gitlab.com~; override with
 ~--host~, or ~--file~ to pin which git-config file it writes).
 
+It also records the secret's name -> uuid in =~/.config/rotato/secrets.json= (a
+plain JSON object) so ad-hoc ("random") auth can resolve a uuid by name instead
+of hard-coding it. The name defaults to the secret's key in Bitwarden; override
+with ~--name~. To use it (~jq~ is already installed):
+
+#+begin_src bash
+uuid="$(jq -r '.["gitlab-pat"]' ~/.config/rotato/secrets.json)"
+export SOME_KEY="$(rotato-fetch "$uuid")"
+#+end_src
+
 - /Another git host/ (a second GitLab, an OAuth-app token): reuse the same
   helper — rerun ~install.sh <other-uuid> --host <host> --user <user>~.
 - /A non-git credential/: call the primitive directly, e.g.
