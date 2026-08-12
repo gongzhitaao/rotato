@@ -22,6 +22,11 @@
 #   --file <path>       git config file to write to     (default: git --global)
 #   --token-file <path> where to store this machine's read-only BWS token
 #                                                       (default: ~/.config/rotato/token)
+#   --name <name>       friendly name to record for this secret; used to resolve
+#                       its uuid later for ad-hoc auth. Defaults to the secret's
+#                       key read from Bitwarden.
+#   --secrets-file <path>  JSON registry of installed name -> uuid entries
+#                                                  (default: ~/.config/rotato/secrets.json)
 #   --dry-run           print exactly what would change, then stop
 set -euo pipefail
 
@@ -35,6 +40,8 @@ INSTALL_ID=""
 BIN="$HOME/.local/bin"
 GIT_FILE=""
 TOKEN_FILE="$HOME/.config/rotato/token"
+NAME=""
+SECRETS_FILE="$HOME/.config/rotato/secrets.json"
 DRY=0
 SECRET_ID=""
 
@@ -48,6 +55,8 @@ while [ $# -gt 0 ]; do
     --bin) BIN="$2"; shift 2 ;;
     --file) GIT_FILE="$2"; shift 2 ;;
     --token-file) TOKEN_FILE="$2"; shift 2 ;;
+    --name) NAME="$2"; shift 2 ;;
+    --secrets-file) SECRETS_FILE="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) SECRET_ID="$1"; shift ;;
@@ -99,6 +108,7 @@ if [ "$MODE" = "token" ]; then
   echo "       credential.https://$HOST.username = $GIT_USER"
 fi
 echo "       credential.https://$HOST.helper   = $helper_cmd"
+echo "  5. record ${NAME:-<name from Bitwarden>} -> $SECRET_ID in $SECRETS_FILE"
 echo
 
 [ "$DRY" = 1 ] && { echo "(dry run — nothing changed)"; exit 0; }
@@ -139,6 +149,33 @@ if [ "$MODE" = "token" ]; then
 fi
 "${git_cfg[@]}" --replace-all "credential.https://$HOST.helper" "$helper_cmd"
 echo "configured git credential helper for https://$HOST"
+
+# 5. record name -> uuid so ad-hoc ("random") auth can resolve a secret by name.
+# Not sensitive (just a uuid + a label), but kept beside the token for locality.
+if [ -z "$NAME" ]; then
+  # Fall back to the secret's own key in Bitwarden. Best-effort: a network or
+  # auth hiccup here must not fail the install (git is already configured).
+  NAME="$(BWS_ACCESS_TOKEN="$(cat "$TOKEN_FILE")" \
+    bws secret get "$SECRET_ID" 2>/dev/null | jq -r '.key // empty' || true)"
+fi
+if [ -z "$NAME" ]; then
+  echo "warning: no --name given and could not read the secret's name from" >&2
+  echo "         Bitwarden; skipping $SECRETS_FILE" >&2
+  echo "         (rerun with --name <name> to record it)" >&2
+else
+  mkdir -p "$(dirname "$SECRETS_FILE")"
+  # A JSON object keyed by name -> uuid: readable, and jq (already a dep) both
+  # writes and queries it. Setting .[name] dedupes by name. Write via a temp
+  # file in the same dir so the swap is atomic.
+  tmp="$(mktemp "$SECRETS_FILE.XXXXXX")"
+  if [ -s "$SECRETS_FILE" ] && jq -e 'type == "object"' "$SECRETS_FILE" >/dev/null 2>&1; then
+    jq --arg n "$NAME" --arg u "$SECRET_ID" '.[$n] = $u' "$SECRETS_FILE" > "$tmp"
+  else
+    jq -n --arg n "$NAME" --arg u "$SECRET_ID" '{($n): $u}' > "$tmp"
+  fi
+  mv "$tmp" "$SECRETS_FILE"
+  echo "recorded '$NAME' -> $SECRET_ID in $SECRETS_FILE"
+fi
 
 echo
 if [ "$MODE" = "github" ]; then
