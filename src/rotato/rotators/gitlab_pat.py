@@ -8,7 +8,7 @@ Env: GITLAB_PAT_SECRET_ID (required), GITLAB_HOST (default https://gitlab.com),
 import datetime
 import os
 
-import httpx
+import httpx2
 
 from rotato import core
 
@@ -24,7 +24,7 @@ def _rotate(old: str) -> str:
         .date()
         .isoformat()
     )
-    resp = httpx.post(
+    resp = httpx2.post(
         f"{host}/api/v4/personal_access_tokens/self/rotate",
         headers={"PRIVATE-TOKEN": old},
         data={"expires_at": expires_at},

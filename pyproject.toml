@@ -5,7 +5,7 @@ description = "Serverless secret/key rotation into Bitwarden Secrets Manager"
 requires-python = ">=3.11"
 dependencies = [
     "bitwarden-sdk>=2.1.0",
-    "httpx>=0.28.1",
+    "httpx2>=2.10.0",
     "pyjwt[crypto]>=2.8.0",
 ]
 

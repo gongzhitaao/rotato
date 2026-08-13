@@ -4,12 +4,12 @@ The stored secret is the App private key (PEM), not a usable credential. We
 fetch it, sign a short-lived RS256 JWT, and exchange it for an installation
 access token (~1h). The PEM stays in memory; only the minted token is returned.
 
-Deps: pyjwt[crypto] (RS256 signing) + httpx (already a rotato dependency).
+Deps: pyjwt[crypto] (RS256 signing) + httpx2 (already a rotato dependency).
 """
 
 import time
 
-import httpx
+import httpx2
 import jwt
 
 from rotato.consumer import fetch
@@ -34,7 +34,7 @@ def mint_token(
         algorithm="RS256",
     )
 
-    resp = httpx.post(
+    resp = httpx2.post(
         f"{api}/app/installations/{installation_id}/access_tokens",
         headers={
             "Authorization": f"Bearer {token}",

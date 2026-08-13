@@ -41,7 +41,7 @@ def _install_fakes(monkeypatch, pem, captured):
         captured["auth"] = headers["Authorization"]
         return _CapturingResponse(captured)
 
-    monkeypatch.setattr(github.httpx, "post", fake_post)
+    monkeypatch.setattr(github.httpx2, "post", fake_post)
 
 
 def test_mint_token_returns_installation_token(monkeypatch):
@@ -86,6 +86,6 @@ def test_mint_token_raises_on_http_error(monkeypatch):
 
         return R()
 
-    monkeypatch.setattr(github.httpx, "post", boom)
+    monkeypatch.setattr(github.httpx2, "post", boom)
     with pytest.raises(RuntimeError):
         github.mint_token("pem", "123", "789")
