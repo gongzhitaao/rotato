@@ -19,6 +19,6 @@ jobs:
       - name: ruff lint
         run: uv run ruff check src
       - name: pylint
-        run: uv run pylint src/rotato --ignore-patterns='.*_test\.py'
+        run: uv run pylint src/rotato
       - name: pytest
         run: uv run pytest

@@ -1,6 +1,11 @@
+"""Tests for the rotate_secret read -> rotate -> write -> verify loop."""
+
+# Tests exercise a fake store's internals.
+# pylint: disable=protected-access
+
 import pytest
 
-from rotato.core import RotationError, rotate_secret
+from rotato import core
 
 
 class FakeStore:
@@ -18,21 +23,21 @@ class FakeStore:
 
 def test_happy_path(capsys):
     store = FakeStore("OLD")
-    rotate_secret(store, "sid", lambda old: "NEW")
+    core.rotate_secret(store, "sid", lambda old: "NEW")
     assert store._v["sid"] == "NEW"
     assert "OK: rotated sid" in capsys.readouterr().out
 
 
 def test_unreadable_current_value():
     store = FakeStore("")
-    with pytest.raises(RotationError, match="could not read"):
-        rotate_secret(store, "sid", lambda old: "NEW")
+    with pytest.raises(core.RotationError, match="could not read"):
+        core.rotate_secret(store, "sid", lambda old: "NEW")
 
 
 def test_rotate_fn_empty():
     store = FakeStore("OLD")
-    with pytest.raises(RotationError, match="no new value"):
-        rotate_secret(store, "sid", lambda old: "")
+    with pytest.raises(core.RotationError, match="no new value"):
+        core.rotate_secret(store, "sid", lambda old: "")
 
 
 def test_rotate_fn_raises_propagates():
@@ -42,11 +47,11 @@ def test_rotate_fn_raises_propagates():
         raise RuntimeError("boom")
 
     with pytest.raises(RuntimeError):
-        rotate_secret(store, "sid", boom)
+        core.rotate_secret(store, "sid", boom)
 
 
 def test_verify_failure_surfaces_value():
     # break-glass: the new value must appear in the error for manual recovery
     store = FakeStore("OLD", readonly=True)
-    with pytest.raises(RotationError, match="NEW"):
-        rotate_secret(store, "sid", lambda old: "NEW")
+    with pytest.raises(core.RotationError, match="NEW"):
+        core.rotate_secret(store, "sid", lambda old: "NEW")

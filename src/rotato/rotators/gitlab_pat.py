@@ -8,23 +8,20 @@ Env: GITLAB_PAT_SECRET_ID (required), GITLAB_HOST (default https://gitlab.com),
 import datetime
 import os
 
-import httpx
+import httpx2
 
-from ..core import SecretStore, rotate_secret
+from rotato import core
 
 
 def _rotate(old: str) -> str:
     host = os.environ.get("GITLAB_HOST", "https://gitlab.com")
     days = int(os.environ.get("EXPIRY_DAYS", "30"))
     expires_at = (
-        (
-            datetime.datetime.now(datetime.timezone.utc)
-            + datetime.timedelta(days=days)
-        )
+        (datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=days))
         .date()
         .isoformat()
     )
-    resp = httpx.post(
+    resp = httpx2.post(
         f"{host}/api/v4/personal_access_tokens/self/rotate",
         headers={"PRIVATE-TOKEN": old},
         data={"expires_at": expires_at},
@@ -34,6 +31,6 @@ def _rotate(old: str) -> str:
     return resp.json()["token"]
 
 
-def run(store: SecretStore) -> None:
+def run(store: core.SecretStore) -> None:
     secret_id = os.environ["GITLAB_PAT_SECRET_ID"]
-    rotate_secret(store, secret_id, _rotate)
+    core.rotate_secret(store, secret_id, _rotate)

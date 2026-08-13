@@ -22,8 +22,8 @@ Cloud Scheduler ──(cron)──► Cloud Run job  "rotato <name>"
 /The consumer read path/ (laptop / VM, on every git operation):
 
 #+begin_example
-git push / pull ─► rotato-git-credential ─► rotato-fetch ─► bws secret get ─► Bitwarden
-                   (git credential helper)                  read-only; never written to disk
+git push / pull ─► rotato git-credential ─► rotato fetch ─► Bitwarden (read-only)
+                   (git credential helper)                  never written to disk
 #+end_example
 
 ** Invariants
@@ -46,9 +46,9 @@ git push / pull ─► rotato-git-credential ─► rotato-fetch ─► bws secr
 - *Project is the scope boundary.* Bitwarden grants access per /project/, not per
   secret, so a project is the unit of least privilege.
 
-The rotation core is Python (real error handling, the Bitwarden SDK, mockable
-tests); the ~deploy/*~ and ~consumer/*~ scripts stay bash since they only
-orchestrate ~gcloud~ / ~git~ / ~bws~.
+Both the rotation core and the consumer commands are Python, shipped as one
+~rotato~ CLI (real error handling, the Bitwarden SDK, mockable tests). Only the
+~deploy/*~ scripts stay bash, since they just orchestrate ~gcloud~.
 
 * Bootstrap (one-time)
 
@@ -86,32 +86,32 @@ holds it now).
 * Consuming the secret (laptop / VM)
 
 Each consumer fetches the *current* value from Bitwarden on demand, so the PAT is
-never written to disk and rotations are transparent. Run once per machine (needs
-~bws~ + ~jq~):
+never written to disk and rotations are transparent. Install the ~rotato~ CLI
+once — no repo checkout, no ~bws~/~jq~ (the Bitwarden SDK is bundled):
 
 #+begin_src bash
-consumer/install.sh <secret-uuid> --user <git-user>   # add --dry-run to preview
+uv tool install rotato                                # or: pipx install rotato
+rotato install <secret-uuid> --user <git-user>        # add --dry-run to preview
 #+end_src
 
-It stores this machine's read-only BWS token at =~/.config/rotato/token=
-(chmod 600), installs ~rotato-fetch~ + ~rotato-git-credential~ into =~/.local/bin=,
-and points git at the helper for the host (default ~gitlab.com~; override with
-~--host~, or ~--file~ to pin which git-config file it writes).
+~install~ stores this machine's read-only BWS token at =~/.config/rotato/token=
+(chmod 600) and points git at ~rotato git-credential~ for the host (default
+~gitlab.com~; override with ~--host~, or ~--file~ to pin which git-config file it
+writes). It copies nothing — the helper just invokes the installed ~rotato~.
 
 It also records the secret's name -> uuid in =~/.config/rotato/secrets.json= (a
-plain JSON object) so ad-hoc ("random") auth can resolve a uuid by name instead
-of hard-coding it. The name defaults to the secret's key in Bitwarden; override
-with ~--name~. To use it (~jq~ is already installed):
+plain JSON object) so ad-hoc auth can address a secret by name instead of a
+uuid. The name defaults to the secret's key in Bitwarden; override with ~--name~.
+Every command that takes a secret accepts a name or a uuid:
 
 #+begin_src bash
-uuid="$(jq -r '.["gitlab-pat"]' ~/.config/rotato/secrets.json)"
-export SOME_KEY="$(rotato-fetch "$uuid")"
+export SOME_KEY="$(rotato fetch gitlab-pat)"          # by recorded name
+export SOME_KEY="$(rotato fetch <uuid>)"              # or by uuid
 #+end_src
 
 - /Another git host/ (a second GitLab, an OAuth-app token): reuse the same
-  helper — rerun ~install.sh <other-uuid> --host <host> --user <user>~.
-- /A non-git credential/: call the primitive directly, e.g.
-  ~export SOME_KEY="$(rotato-fetch <uuid>)"~.
+  helper — rerun ~rotato install <other-uuid> --host <host> --user <user>~.
+- /A non-git credential/: call the primitive directly, ~rotato fetch <name|uuid>~.
 
 *** GitHub App (no self-rotating PAT)
 
@@ -123,14 +123,13 @@ in the App (so you can revoke one machine without re-keying the rest) and seed
 its PEM as a Bitwarden secret. Then:
 
 #+begin_src bash
-consumer/install.sh <pem-uuid> --github \
+rotato install <pem-uuid> --github \
     --app-id <app-or-client-id> --installation-id <installation-id>
 #+end_src
 
-This installs ~rotato-github-token~ alongside the others (needs ~openssl~ +
-~curl~), which signs the JWT and calls the installation-token endpoint;
-~rotato-git-credential --github~ emits it with username ~x-access-token~. The App
-ID and installation ID are not secret — ~install.sh~ embeds them in the git
+~rotato github-token~ signs the JWT and calls the installation-token endpoint;
+~rotato git-credential --github~ emits that token with username ~x-access-token~.
+The App ID and installation ID are not secret — ~install~ embeds them in the git
 helper command. Scope the App tightly (specific repos, ~contents~ read/write).
 
 * Add a new rotator
@@ -143,15 +142,15 @@ new one."
 
    #+begin_src python
    import os
-   from ..core import SecretStore, rotate_secret
+   from rotato import core
 
    def _rotate(old: str) -> str:
        # call the provider with `old`, do whatever mint/revoke dance it needs,
        # and return the NEW secret value.
        ...
 
-   def run(store: SecretStore) -> None:
-       rotate_secret(store, os.environ["MYSECRET_ID"], _rotate)
+   def run(store: core.SecretStore) -> None:
+       core.rotate_secret(store, os.environ["MYSECRET_ID"], _rotate)
    #+end_src
 
    Add a colocated ~<name>_test.py~ next to it (mock the provider + a fake store).
@@ -186,29 +185,34 @@ uv run ruff check           # lint + import sort
 uv run pylint src/rotato --ignore-patterns='.*_test\.py'   # Google config
 #+end_src
 
-~.pylintrc~ is Google's [[https://google.github.io/styleguide/pylintrc][published config]], used verbatim. Each module has a
-colocated ~<name>_test.py~ (Google style): pytest finds them via ~python_files~,
-they're excluded from pylint, and stripped from the Docker image. Tests mock the
-Bitwarden client and the GitLab HTTP call, so they touch no real service. CI
-(~.github/workflows/ci.yml~) runs the same four gates on push and PRs.
+~.pylintrc~ is Google's [[https://google.github.io/styleguide/pylintrc][published config]] plus the [[https://pypi.org/project/pylint-google-style/][pylint-google-style]]
+plugins (module-over-symbol and absolute-over-relative imports), all enabled.
+Each module has a colocated ~<name>_test.py~ (Google style): pytest finds them
+via ~python_files~, they're linted too, and stripped from the Docker image.
+Tests mock the Bitwarden client and the GitLab HTTP call, so they touch no real
+service. CI (~.github/workflows/ci.yml~) runs the same four gates on push and PRs.
 
 * Layout
 
 #+begin_example
-src/rotato/cli.py                dispatcher: the rotato console script
-src/rotato/core.py               rotate_secret: read -> rotate -> write -> verify
-src/rotato/bws.py                Bitwarden Secrets Manager client (get/set value)
-src/rotato/rotators/<name>.py    per-secret logic; exposes run(store)
-src/rotato/rotators/__init__.py  name -> rotator registry
-src/rotato/**/*_test.py          colocated pytest tests (foo.py -> foo_test.py)
-Dockerfile                       multi-stage: uv builds the venv; runs on python:3.14, non-root
-deploy/rotato.env(.example)      the one fill-in-and-run config (gitignored: rotato.env)
-deploy/setup.sh                  one-time shared infra (APIs, registry, image, SAs)
-deploy/add-rotator.sh            one Cloud Run job + scheduler per secret
-deploy/add-alert.sh              email alert on a rotator's failed executions
-deploy/run.sh                    setup + add-rotator + add-alert, end to end
-consumer/rotato-fetch            read a secret value, read-only (bash)
-consumer/rotato-github-token     mint a GitHub App installation token from a PEM
-consumer/rotato-git-credential   git credential helper (token or --github mode)
-consumer/install.sh              one-time per-machine consumer setup
+src/rotato/cli.py                 argparse dispatcher: the rotato console script
+src/rotato/core.py                rotate_secret: read -> rotate -> write -> verify
+src/rotato/bws.py                 Bitwarden Secrets Manager client (get/set value)
+src/rotato/rotators/<name>.py     per-secret logic; exposes run(store)
+src/rotato/rotators/__init__.py   name -> rotator registry
+src/rotato/consumer/config.py     ~/.config/rotato paths + name -> uuid registry
+src/rotato/consumer/fetch.py      rotato fetch: read a secret value, read-only
+src/rotato/consumer/github.py     rotato github-token: mint an installation token
+src/rotato/consumer/gitcredential.py  rotato git-credential: git credential helper
+src/rotato/consumer/install.py    rotato install: one-time per-machine setup
+src/rotato/**/*_test.py           colocated pytest tests (foo.py -> foo_test.py)
+Dockerfile                        multi-stage: uv builds the venv; python:3.14, non-root
+deploy/rotato.env(.example)       the one fill-in-and-run config (gitignored: rotato.env)
+deploy/setup.sh                   one-time shared infra (APIs, registry, image, SAs)
+deploy/add-rotator.sh             one Cloud Run job + scheduler per secret
+deploy/add-alert.sh               email alert on a rotator's failed executions
+deploy/run.sh                     setup + add-rotator + add-alert, end to end
+README.md                         short PyPI-facing readme (this file is the full one)
+.github/workflows/ci.yml          CI gates (ruff, pylint, pytest)
+.github/workflows/publish.yml     build + publish to PyPI on release (Trusted Publishing)
 #+end_example
