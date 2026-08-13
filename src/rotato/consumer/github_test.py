@@ -1,6 +1,7 @@
 """Tests for minting GitHub App installation tokens."""
 
 import cryptography.hazmat.primitives.asymmetric.rsa as rsa
+import httpx2
 import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -62,6 +63,8 @@ def test_mint_token_signs_app_id_as_iss(monkeypatch):
     jwt_str = captured["auth"].removeprefix("Bearer ")
     claims = jwt.decode(jwt_str, public, algorithms=["RS256"])
     assert claims["iss"] == "123456"
+    # exp must stay under GitHub's 10-minute cap (and be after iat).
+    assert 0 < claims["exp"] - claims["iat"] <= 600
 
 
 def test_mint_token_signs_string_client_id_as_iss(monkeypatch):
@@ -78,14 +81,11 @@ def test_mint_token_signs_string_client_id_as_iss(monkeypatch):
 def test_mint_token_raises_on_http_error(monkeypatch):
     private, _ = _pem()
     monkeypatch.setattr(github.fetch, "fetch_value", lambda s: private)
-
-    def boom(*_args, **_kwargs):
-        class R:
-            def raise_for_status(self):
-                raise RuntimeError("401")
-
-        return R()
-
-    monkeypatch.setattr(github.httpx2, "post", boom)
-    with pytest.raises(RuntimeError):
+    req = httpx2.Request("POST", "https://api.github.com/x")
+    monkeypatch.setattr(
+        github.httpx2,
+        "post",
+        lambda *a, **k: httpx2.Response(401, request=req),
+    )
+    with pytest.raises(httpx2.HTTPStatusError):
         github.mint_token("pem", "123", "789")

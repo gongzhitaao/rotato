@@ -32,6 +32,23 @@ def emit_credential(
 
     if is_github:
         # Installation tokens require the username x-access-token.
-        token = github.mint_token(name_or_uuid, app_id, installation_id, api)
+        token = _protocol_safe(
+            github.mint_token(name_or_uuid, app_id, installation_id, api)
+        )
         return f"username=x-access-token\npassword={token}\n"
-    return f"password={fetch.fetch_value(name_or_uuid)}\n"
+    return f"password={_protocol_safe(fetch.fetch_value(name_or_uuid))}\n"
+
+
+def _protocol_safe(value: str) -> str:
+    """Reject a value that would corrupt git's line-oriented credential wire.
+
+    A newline/carriage-return/NUL in the emitted password lets the rest of the
+    value be reparsed by git as attribute lines — so refuse rather than leak a
+    truncated or attacker-shaped credential.
+    """
+    if any(c in value for c in ("\n", "\r", "\0")):
+        raise SystemExit(
+            "rotato: secret value contains a control character; refusing to "
+            "emit it as a git credential"
+        )
+    return value

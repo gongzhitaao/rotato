@@ -78,13 +78,17 @@ def record_secret(name: str, uuid: str) -> None:
 
 
 def resolve(name_or_uuid: str) -> str:
-    """Map a friendly name to its uuid; pass a uuid through unchanged."""
+    """Map a friendly name to its uuid; pass a uuid through unchanged.
+
+    A recorded name wins over the uuid shape, so a name that happens to look
+    like a uuid still resolves to its mapped value.
+    """
+    secrets = load_secrets()
+    if name_or_uuid in secrets:
+        return secrets[name_or_uuid]
     if _UUID_RE.match(name_or_uuid):
         return name_or_uuid
-    uuid = load_secrets().get(name_or_uuid)
-    if uuid is None:
-        raise SystemExit(
-            f"rotato: unknown secret name {name_or_uuid!r}; "
-            f"not found in {secrets_file()}"
-        )
-    return uuid
+    raise SystemExit(
+        f"rotato: unknown secret name {name_or_uuid!r}; "
+        f"not found in {secrets_file()}"
+    )

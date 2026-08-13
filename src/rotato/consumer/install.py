@@ -15,6 +15,7 @@ Two modes:
 import dataclasses
 import getpass
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -46,13 +47,18 @@ def _rotato_bin() -> str:
 
 
 def _helper_cmd(args: InstallArgs, rotato: str) -> str:
+    # git runs a "!"-helper through the shell, so every interpolated field is
+    # shell-quoted (the rotato path may contain spaces; secret_id/app_id are
+    # normally safe but quoted for good measure).
+    q = shlex.quote
     if args.mode == "github":
         return (
-            f"!{rotato} git-credential --github "
-            f"--app-id {args.app_id} --installation-id {args.installation_id} "
-            f"{args.secret_id}"
+            f"!{q(rotato)} git-credential --github "
+            f"--app-id {q(args.app_id)} "
+            f"--installation-id {q(args.installation_id)} "
+            f"{q(args.secret_id)}"
         )
-    return f"!{rotato} git-credential {args.secret_id}"
+    return f"!{q(rotato)} git-credential {q(args.secret_id)}"
 
 
 def _git_config(args: InstallArgs) -> list[str]:
@@ -102,9 +108,12 @@ def run(args: InstallArgs) -> int:
     else:
         token_file.parent.mkdir(parents=True, exist_ok=True)
         token = getpass.getpass("Paste this machine's READ-ONLY BWS token: ")
-        # Write with 0600 from the start; never widen an existing file.
+        # Write with 0600. The mode arg to os.open only applies when *creating*
+        # the file, so fchmod as well to tighten a pre-existing (e.g. empty,
+        # world-readable) token file we're about to overwrite.
         fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as fobj:
+            os.fchmod(fobj.fileno(), 0o600)
             fobj.write(token)
         print(f"wrote {token_file} (chmod 600)")
 
@@ -134,6 +143,7 @@ def run(args: InstallArgs) -> int:
     if args.mode == "github":
         print(
             f"done. test with:  rotato github-token {args.secret_id} "
+            f"--app-id {args.app_id} --installation-id {args.installation_id} "
             "| head -c 6; echo ..."
         )
     else:

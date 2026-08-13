@@ -28,6 +28,13 @@ def test_resolve_unknown_name_exits():
         config.resolve("no-such-name")
 
 
+def test_resolve_recorded_name_wins_over_uuid_shape():
+    # a recorded name that happens to look like a uuid still maps to its value.
+    uuid_shaped_name = "00000000-0000-0000-0000-000000000000"
+    config.record_secret(uuid_shaped_name, _UUID)
+    assert config.resolve(uuid_shaped_name) == _UUID
+
+
 def test_record_secret_roundtrip_and_dedupe():
     config.record_secret("a", _UUID)
     config.record_secret("a", "other-uuid")  # same name replaces

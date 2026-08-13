@@ -20,6 +20,37 @@ def test_run_subcommand_unknown_rotator_returns_2(capsys):
     assert "unknown rotator" in capsys.readouterr().err
 
 
+def _stub_registry(monkeypatch):
+    """Register a fake rotator and a fake client; return the call recorder."""
+    seen = {}
+    monkeypatch.setattr(
+        cli.rotators,
+        "REGISTRY",
+        {"myrot": lambda store: seen.update(store=store)},
+    )
+    monkeypatch.setattr(cli.bws, "BwsClient", lambda: "FAKE_CLIENT")
+    return seen
+
+
+def test_legacy_bare_name_dispatches_to_rotator(monkeypatch):
+    seen = _stub_registry(monkeypatch)
+    assert cli.main(["myrot"]) == 0
+    assert seen["store"] == "FAKE_CLIENT"
+
+
+def test_run_subcommand_dispatches_to_rotator(monkeypatch):
+    seen = _stub_registry(monkeypatch)
+    assert cli.main(["run", "myrot"]) == 0
+    assert seen["store"] == "FAKE_CLIENT"
+
+
+def test_rotator_env_fallback(monkeypatch):
+    seen = _stub_registry(monkeypatch)
+    monkeypatch.setenv("ROTATOR", "myrot")
+    assert cli.main([]) == 0
+    assert seen["store"] == "FAKE_CLIENT"
+
+
 # --- consumer subcommands ---
 
 
@@ -56,8 +87,8 @@ def test_install_github_requires_app_id(capsys):
     assert "--app-id" in capsys.readouterr().err
 
 
-def test_install_dry_run(monkeypatch, capsys):
-    monkeypatch.setenv("ROTATO_CONFIG_DIR", "/tmp/rotato-test-doesnotmatter")
+def test_install_dry_run(monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("ROTATO_CONFIG_DIR", str(tmp_path))
     rc = cli.main(["install", "some-uuid", "--user", "alice", "--dry-run"])
     assert rc == 0
     out = capsys.readouterr().out

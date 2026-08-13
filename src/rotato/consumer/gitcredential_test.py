@@ -1,5 +1,7 @@
 """Tests for the git credential-helper adapter."""
 
+import pytest
+
 import rotato.consumer.gitcredential as gc
 
 
@@ -22,3 +24,10 @@ def test_store_and_erase_are_noops(monkeypatch):
     assert gc.emit_credential("gitlab-pat", "store") == ""
     assert gc.emit_credential("gitlab-pat", "erase") == ""
     assert gc.emit_credential("gitlab-pat", "") == ""
+
+
+def test_value_with_newline_is_rejected(monkeypatch):
+    # a newline in the value would corrupt git's line-oriented protocol.
+    monkeypatch.setattr(gc.fetch, "fetch_value", lambda s: "abc\nhost=evil")
+    with pytest.raises(SystemExit):
+        gc.emit_credential("gitlab-pat", "get")
