@@ -1,5 +1,8 @@
 """Tests for the rotato CLI dispatcher."""
 
+# Completion tests reach the module's private completer helpers.
+# pylint: disable=protected-access
+
 import rotato.cli as cli
 
 # --- rotator dispatch (server side) ---
@@ -86,3 +89,22 @@ def test_list_secrets(monkeypatch, capsys, tmp_path):
     cli.config.record_secret("gl", cli.config.Entry(uuid="U"))
     assert cli.main(["list", "secrets"]) == 0
     assert "gl\ttoken\tU" in capsys.readouterr().out
+
+
+# --- shell completion ---
+
+
+def test_complete_secrets(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROTATO_CONFIG_DIR", str(tmp_path))
+    cli.config.record_secret("gitlab-pat", cli.config.Entry(uuid="U1"))
+    cli.config.record_secret("npm-token", cli.config.Entry(uuid="U2"))
+    assert cli._complete_secrets("gi") == ["gitlab-pat"]
+    assert set(cli._complete_secrets("")) == {"gitlab-pat", "npm-token"}
+
+
+def test_complete_rotators(monkeypatch):
+    monkeypatch.setattr(
+        cli.rotators, "REGISTRY", {"gitlab-pat": None, "aws-key": None}
+    )
+    assert cli._complete_rotators("gi") == ["gitlab-pat"]
+    assert set(cli._complete_rotators("")) == {"gitlab-pat", "aws-key"}

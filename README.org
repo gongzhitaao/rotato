@@ -137,6 +137,20 @@ The App ID and installation ID (recorded at install time, not secret) let
 call it with username ~x-access-token~. Scope the App tightly (specific repos,
 ~contents~ read/write).
 
+*** Shell completion
+
+Tab-completion (bash / zsh / fish) is provided by [[https://pypi.org/project/argcomplete/][argcomplete]] and completes
+subcommands, choices, flags, and — the useful part — *installed secret names*
+(for ~print~/~setup~) and *rotator names* (for ~refresh~). It completes names
+only, never secret values. Enable it once, e.g. for bash in =~/.bashrc=:
+
+#+begin_src bash
+eval "$(register-python-argcomplete rotato)"
+#+end_src
+
+The dynamic completers read =secrets.json= / the rotator registry in-process, so
+there's no output to parse and nothing is cached stale.
+
 * Add a new rotator
 
 A rotator is a small module exposing ~run(store)~; ~rotate_secret~ handles the
