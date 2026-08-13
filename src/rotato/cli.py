@@ -2,11 +2,11 @@
 
 One entry point (the `rotato` console script) with two surfaces:
 
-  server    rotato run <name>            run a named rotator (Cloud Run job)
-  consumer  rotato install ...           bootstrap this machine
-            rotato fetch <name|uuid>     print a secret's value, read-only
-            rotato github-token <...>    mint a GitHub App installation token
-            rotato git-credential <...>  git credential helper
+  consumer  rotato install <uuid> …        register a secret on this machine
+            rotato print <name|uuid>        print the usable credential
+            rotato setup github|gitlab|git  wire git to an installed secret
+            rotato list secrets|rotators    list installed secrets / rotators
+  server    rotato refresh <name>           run a rotator (Cloud Run job)
 
 Backward-compatible: a bare `rotato <name>` (or the ROTATOR env var) with no
 recognized subcommand still runs a rotator, so the container ENTRYPOINT keeps
@@ -18,15 +18,15 @@ import os
 import sys
 
 from rotato import bws, rotators
-from rotato.consumer import fetch, gitcredential, github, install
+from rotato.consumer import config, credential, install, setup
 
-_SUBCOMMANDS = {"run", "fetch", "github-token", "git-credential", "install"}
+_SUBCOMMANDS = {"install", "print", "setup", "list", "refresh"}
 
 
 def _run_rotator(name: str) -> int:
     if not name:
         print(
-            "usage: rotato run <rotator-name>  (or set ROTATOR)",
+            "usage: rotato refresh <rotator-name>  (or set ROTATOR)",
             file=sys.stderr,
         )
         return 2
@@ -41,110 +41,98 @@ def _run_rotator(name: str) -> int:
     return 0
 
 
-def _cmd_run(args) -> int:
+def _cmd_refresh(args) -> int:
     return _run_rotator(args.name or os.environ.get("ROTATOR", ""))
 
 
-def _cmd_fetch(args) -> int:
-    print(fetch.fetch_value(args.secret))
-    return 0
-
-
-def _cmd_github_token(args) -> int:
-    print(
-        github.mint_token(
-            args.secret, args.app_id, args.installation_id, args.api
-        )
-    )
-    return 0
-
-
-def _cmd_git_credential(args) -> int:
-    sys.stdout.write(
-        gitcredential.emit_credential(
-            args.secret,
-            args.operation,
-            is_github=args.github,
-            app_id=args.app_id,
-            installation_id=args.installation_id,
-            api=args.api,
-        )
-    )
-    return 0
-
-
 def _cmd_install(args) -> int:
-    if args.github:
-        if not args.app_id or not args.installation_id:
-            print(
-                "error: --app-id and --installation-id are required "
-                "with --github",
-                file=sys.stderr,
-            )
-            return 2
-    elif not args.user:
-        print("error: --user <git-user> is required", file=sys.stderr)
+    if args.github and (not args.app_id or not args.installation_id):
+        print(
+            "error: --app-id and --installation-id are required with --github",
+            file=sys.stderr,
+        )
         return 2
     return install.run(
         install.InstallArgs(
-            secret_id=args.secret,
-            mode="github" if args.github else "token",
-            host=args.host or "",
-            user=args.user or "",
+            uuid=args.uuid,
+            name=args.name or "",
+            github=args.github,
             app_id=args.app_id or "",
             installation_id=args.installation_id or "",
-            name=args.name or "",
+            dry_run=args.dry_run,
+        )
+    )
+
+
+def _cmd_print(args) -> int:
+    print(credential.usable_credential(args.secret))
+    return 0
+
+
+def _cmd_setup(args) -> int:
+    return setup.run(
+        setup.SetupArgs(
+            target=args.target,
+            name_or_uuid=args.secret,
+            user=args.user or "",
+            host=args.host or "",
             git_file=args.file or "",
             dry_run=args.dry_run,
         )
     )
 
 
+def _cmd_list(args) -> int:
+    if args.what == "rotators":
+        for name in sorted(rotators.REGISTRY):
+            print(name)
+        return 0
+    secrets = config.load_secrets()
+    for name in sorted(secrets):
+        entry = secrets[name]
+        print(f"{name}\t{entry.kind}\t{entry.uuid}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rotato")
     sub = parser.add_subparsers(dest="command")
 
-    p_run = sub.add_parser("run", help="run a named rotator (server-side)")
-    p_run.add_argument("name", nargs="?", help="rotator name (or set ROTATOR)")
-    p_run.set_defaults(func=_cmd_run)
-
-    p_fetch = sub.add_parser("fetch", help="print a secret's value, read-only")
-    p_fetch.add_argument("secret", help="secret name or uuid")
-    p_fetch.set_defaults(func=_cmd_fetch)
-
-    p_gh = sub.add_parser(
-        "github-token", help="mint a GitHub App installation token"
+    p_install = sub.add_parser(
+        "install", help="register a secret on this machine"
     )
-    p_gh.add_argument("secret", help="PEM secret name or uuid")
-    p_gh.add_argument("--app-id", required=True, help="App ID or Client ID")
-    p_gh.add_argument("--installation-id", required=True)
-    p_gh.add_argument("--api", default=github.DEFAULT_API)
-    p_gh.set_defaults(func=_cmd_github_token)
-
-    p_gc = sub.add_parser("git-credential", help="git credential helper")
-    p_gc.add_argument("secret", help="secret name or uuid")
-    p_gc.add_argument(
-        "operation", nargs="?", default="", help="get|store|erase"
+    p_install.add_argument("uuid", help="Bitwarden secret uuid")
+    p_install.add_argument("--name", help="friendly name (default: BWS key)")
+    p_install.add_argument(
+        "--github", action="store_true", help="a GitHub App PEM (mints tokens)"
     )
-    p_gc.add_argument("--github", action="store_true", help="GitHub App mode")
-    p_gc.add_argument("--app-id", default="")
-    p_gc.add_argument("--installation-id", default="")
-    p_gc.add_argument("--api", default=github.DEFAULT_API)
-    p_gc.set_defaults(func=_cmd_git_credential)
-
-    p_in = sub.add_parser("install", help="one-time per-machine consumer setup")
-    p_in.add_argument("secret", help="secret uuid to install")
-    p_in.add_argument("--github", action="store_true", help="GitHub App mode")
-    p_in.add_argument("--host", help="git host (default gitlab/github.com)")
-    p_in.add_argument("--user", help="git username (required, token mode)")
-    p_in.add_argument("--app-id", help="App/Client ID (required --github)")
-    p_in.add_argument(
+    p_install.add_argument("--app-id", help="App/Client ID (required --github)")
+    p_install.add_argument(
         "--installation-id", help="installation ID (required --github)"
     )
-    p_in.add_argument("--name", help="name to record (default: BWS key)")
-    p_in.add_argument("--file", help="git config file (default: --global)")
-    p_in.add_argument("--dry-run", action="store_true")
-    p_in.set_defaults(func=_cmd_install)
+    p_install.add_argument("--dry-run", action="store_true")
+    p_install.set_defaults(func=_cmd_install)
+
+    p_print = sub.add_parser("print", help="print the usable credential")
+    p_print.add_argument("secret", help="installed name or uuid")
+    p_print.set_defaults(func=_cmd_print)
+
+    p_setup = sub.add_parser("setup", help="wire git to an installed secret")
+    p_setup.add_argument("target", choices=["github", "gitlab", "git"])
+    p_setup.add_argument("secret", help="installed name or uuid")
+    p_setup.add_argument("--user", help="git username (required, gitlab/git)")
+    p_setup.add_argument("--host", help="git host (required for 'git')")
+    p_setup.add_argument("--file", help="git config file (default: --global)")
+    p_setup.add_argument("--dry-run", action="store_true")
+    p_setup.set_defaults(func=_cmd_setup)
+
+    p_list = sub.add_parser("list", help="list installed secrets / rotators")
+    p_list.add_argument("what", choices=["secrets", "rotators"])
+    p_list.set_defaults(func=_cmd_list)
+
+    p_refresh = sub.add_parser("refresh", help="run a rotator (server-side)")
+    p_refresh.add_argument("name", nargs="?", help="rotator name (or ROTATOR)")
+    p_refresh.set_defaults(func=_cmd_refresh)
 
     return parser
 

@@ -1,4 +1,6 @@
-"""Tests for consumer paths and the name -> uuid registry."""
+"""Tests for consumer paths and the installed-secret registry."""
+
+import json
 
 import pytest
 
@@ -14,39 +16,80 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.delenv("ROTATO_SECRETS_FILE", raising=False)
 
 
-def test_resolve_passes_uuid_through():
-    assert config.resolve(_UUID) == _UUID
+def test_record_and_resolve_by_name():
+    config.record_secret("gitlab-pat", config.Entry(uuid=_UUID))
+    name, entry = config.resolve("gitlab-pat")
+    assert name == "gitlab-pat"
+    assert entry.uuid == _UUID
+    assert entry.kind == config.KIND_TOKEN
 
 
-def test_resolve_maps_name_to_uuid():
-    config.record_secret("gitlab-pat", _UUID)
-    assert config.resolve("gitlab-pat") == _UUID
+def test_resolve_by_uuid_reverse_lookup():
+    config.record_secret("gitlab-pat", config.Entry(uuid=_UUID))
+    name, entry = config.resolve(_UUID)
+    assert name == "gitlab-pat"
+    assert entry.uuid == _UUID
 
 
-def test_resolve_unknown_name_exits():
+def test_resolve_uninstalled_name_exits():
     with pytest.raises(SystemExit):
         config.resolve("no-such-name")
 
 
-def test_resolve_recorded_name_wins_over_uuid_shape():
-    # a recorded name that happens to look like a uuid still maps to its value.
-    uuid_shaped_name = "00000000-0000-0000-0000-000000000000"
-    config.record_secret(uuid_shaped_name, _UUID)
-    assert config.resolve(uuid_shaped_name) == _UUID
+def test_resolve_uninstalled_uuid_exits():
+    with pytest.raises(SystemExit):
+        config.resolve(_UUID)
 
 
-def test_record_secret_roundtrip_and_dedupe():
-    config.record_secret("a", _UUID)
-    config.record_secret("a", "other-uuid")  # same name replaces
-    config.record_secret("b", _UUID)
-    assert config.load_secrets() == {"a": "other-uuid", "b": _UUID}
+def test_github_app_entry_roundtrip():
+    config.record_secret(
+        "gh",
+        config.Entry(
+            uuid=_UUID,
+            kind=config.KIND_GITHUB_APP,
+            app_id="123",
+            installation_id="456",
+        ),
+    )
+    _, entry = config.resolve("gh")
+    assert entry.kind == config.KIND_GITHUB_APP
+    assert entry.app_id == "123"
+    assert entry.installation_id == "456"
 
 
-def test_load_secrets_missing_file_is_empty():
-    assert config.load_secrets() == {}
+def test_record_dedupes_by_name():
+    config.record_secret("a", config.Entry(uuid=_UUID))
+    config.record_secret("a", config.Entry(uuid="other"))
+    secrets = config.load_secrets()
+    assert set(secrets) == {"a"}
+    assert secrets["a"].uuid == "other"
 
 
-def test_read_token_strips_and_reads(tmp_path, monkeypatch):
+def test_record_preserves_other_entries():
+    config.record_secret("a", config.Entry(uuid="UA"))
+    config.record_secret("b", config.Entry(uuid="UB"))
+    config.record_secret("c", config.Entry(uuid="UC"))
+    secrets = config.load_secrets()
+    assert set(secrets) == {"a", "b", "c"}
+    assert secrets["a"].uuid == "UA"
+    assert secrets["b"].uuid == "UB"
+
+
+def test_reads_legacy_uuid_string_format(tmp_path):
+    # 0.1.x wrote {name: uuid}; read it as a token entry.
+    (tmp_path / "secrets.json").write_text(
+        json.dumps({"legacy": _UUID}), encoding="utf-8"
+    )
+    _, entry = config.resolve("legacy")
+    assert entry.uuid == _UUID
+    assert entry.kind == config.KIND_TOKEN
+
+
+def test_load_secrets_missing_is_empty():
+    assert not config.load_secrets()
+
+
+def test_read_token(tmp_path, monkeypatch):
     token = tmp_path / "token"
     token.write_text("  sekret\n")
     monkeypatch.setenv("ROTATO_TOKEN_FILE", str(token))

@@ -1,8 +1,8 @@
-"""`rotato github-token` — mint a short-lived GitHub App installation token.
+"""Mint a short-lived GitHub App installation token from a private key.
 
-The stored secret is the App private key (PEM), not a usable credential. We
-fetch it, sign a short-lived RS256 JWT, and exchange it for an installation
-access token (~1h). The PEM stays in memory; only the minted token is returned.
+Sign a short-lived RS256 JWT with the App PEM and exchange it for an
+installation access token (~1h). The caller supplies the PEM; only the minted
+token is returned.
 
 Deps: pyjwt[crypto] (RS256 signing) + httpx2 (already a rotato dependency).
 """
@@ -12,19 +12,15 @@ import time
 import httpx2
 import jwt
 
-from rotato.consumer import fetch
-
 DEFAULT_API = "https://api.github.com"
 
 
 def mint_token(
-    pem_name_or_uuid: str,
+    pem: str,
     app_id: str,
     installation_id: str,
     api: str = DEFAULT_API,
 ) -> str:
-    pem = fetch.fetch_value(pem_name_or_uuid)
-
     # iat backdated 60s for clock skew, exp +9min (GitHub caps app JWTs at 10).
     # iss is the App ID or Client ID; GitHub accepts either as a string.
     now = int(time.time())
