@@ -45,13 +45,18 @@ def _git_config(git_file: str) -> list[str]:
 def _helper(rotato: str, name: str, is_github: bool) -> str:
     # git runs a "!"-helper via the shell with the operation ($1) appended, so
     # only act on `get`. shlex.quote the path/name (git's PATH may be minimal).
+    # Capture into $v so a failed `print` (expired token, removed secret) exits
+    # non-zero — git reports a helper failure, not a silent empty password.
     inner = f"{shlex.quote(rotato)} print {shlex.quote(name)}"
     fmt = (
         "'username=x-access-token\\npassword=%s\\n'"
         if is_github
         else "'password=%s\\n'"
     )
-    return f'!f() {{ test "$1" = get && printf {fmt} "$({inner})"; }}; f'
+    return (
+        f'!f() {{ test "$1" = get || return 0; '
+        f'v=$({inner}) || exit 1; printf {fmt} "$v"; }}; f'
+    )
 
 
 def run(args: SetupArgs) -> int:

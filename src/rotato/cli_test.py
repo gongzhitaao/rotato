@@ -85,6 +85,4 @@ def test_list_secrets(monkeypatch, capsys, tmp_path):
     monkeypatch.setenv("ROTATO_CONFIG_DIR", str(tmp_path))
     cli.config.record_secret("gl", cli.config.Entry(uuid="U"))
     assert cli.main(["list", "secrets"]) == 0
-    out = capsys.readouterr().out
-    assert "gl" in out
-    assert "U" in out
+    assert "gl\ttoken\tU" in capsys.readouterr().out

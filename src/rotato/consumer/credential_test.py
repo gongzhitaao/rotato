@@ -53,3 +53,27 @@ def test_github_app_entry_mints_token(monkeypatch):
 def test_uninstalled_exits():
     with pytest.raises(SystemExit):
         credential.usable_credential("nope")
+
+
+def test_rejects_control_char_value(monkeypatch):
+    config.record_secret("gl", config.Entry(uuid="U", kind=config.KIND_TOKEN))
+    monkeypatch.setattr(credential, "_raw_value", lambda u: "abc\nhost=evil")
+    with pytest.raises(SystemExit):
+        credential.usable_credential("gl")
+
+
+def test_raw_value_reads_token_and_fetches(monkeypatch):
+    monkeypatch.setattr(credential.config, "read_token", lambda: "TOK")
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, access_token=None):
+            seen["token"] = access_token
+
+        def get_value(self, uuid):
+            seen["uuid"] = uuid
+            return "VALUE"
+
+    monkeypatch.setattr(credential.bws, "BwsClient", FakeClient)
+    assert credential._raw_value("U1") == "VALUE"
+    assert seen == {"token": "TOK", "uuid": "U1"}

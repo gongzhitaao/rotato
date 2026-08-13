@@ -85,6 +85,14 @@ def run(args: InstallArgs) -> int:
         )
         return 1
 
+    existing = config.load_secrets().get(name)
+    if existing and existing.uuid != args.uuid:
+        print(
+            f"warning: '{name}' already points at {existing.uuid}; "
+            f"replacing it with {args.uuid}",
+            file=sys.stderr,
+        )
+
     entry = config.Entry(
         uuid=args.uuid,
         kind=kind,

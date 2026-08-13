@@ -64,6 +64,38 @@ def test_github_writes_helper_and_no_username_config(calls):
     assert "/opt/rotato print gh" in helper
 
 
+def test_git_target_writes_username_and_helper(calls):
+    config.record_secret("tok", config.Entry(uuid="U"))
+    rc = setup.run(
+        setup.SetupArgs(
+            target="git",
+            name_or_uuid="tok",
+            user="bob",
+            host="git.example.com",
+        )
+    )
+    assert rc == 0
+    assert [
+        "git",
+        "config",
+        "--global",
+        "--replace-all",
+        "credential.https://git.example.com.username",
+        "bob",
+    ] in calls
+    helper = _helper_value(calls)
+    assert "/opt/rotato print tok" in helper
+    assert "username=" not in helper
+
+
+def test_helper_fails_loudly_on_print_error(calls):
+    config.record_secret("gitlab-pat", config.Entry(uuid="U"))
+    setup.run(
+        setup.SetupArgs(target="gitlab", name_or_uuid="gitlab-pat", user="a")
+    )
+    assert "|| exit 1" in _helper_value(calls)
+
+
 def test_gitlab_requires_user(calls):
     config.record_secret("gitlab-pat", config.Entry(uuid="U"))
     rc = setup.run(setup.SetupArgs(target="gitlab", name_or_uuid="gitlab-pat"))

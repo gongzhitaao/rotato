@@ -62,6 +62,13 @@ def test_preexisting_wide_perm_token_is_tightened(env):
     assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
 
 
+def test_warns_on_name_collision_with_different_uuid(env, capsys):
+    install.run(install.InstallArgs(uuid="U1", name="x"))
+    install.run(install.InstallArgs(uuid="U2", name="x"))
+    assert "already points at U1" in capsys.readouterr().err
+    assert config.load_secrets()["x"].uuid == "U2"
+
+
 def test_dry_run_has_no_side_effects(env):
     rc = install.run(install.InstallArgs(uuid="U1", name="n", dry_run=True))
     assert rc == 0

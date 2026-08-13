@@ -65,6 +65,16 @@ def test_record_dedupes_by_name():
     assert secrets["a"].uuid == "other"
 
 
+def test_record_preserves_other_entries():
+    config.record_secret("a", config.Entry(uuid="UA"))
+    config.record_secret("b", config.Entry(uuid="UB"))
+    config.record_secret("c", config.Entry(uuid="UC"))
+    secrets = config.load_secrets()
+    assert set(secrets) == {"a", "b", "c"}
+    assert secrets["a"].uuid == "UA"
+    assert secrets["b"].uuid == "UB"
+
+
 def test_reads_legacy_uuid_string_format(tmp_path):
     # 0.1.x wrote {name: uuid}; read it as a token entry.
     (tmp_path / "secrets.json").write_text(
