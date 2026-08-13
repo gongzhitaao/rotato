@@ -23,10 +23,7 @@ def _pem():
     return private, public
 
 
-class _CapturingResponse:
-    def __init__(self, captured):
-        self._captured = captured
-
+class _Resp:
     def raise_for_status(self):
         pass
 
@@ -34,58 +31,54 @@ class _CapturingResponse:
         return {"token": "ghs_installation_token"}
 
 
-def _install_fakes(monkeypatch, pem, captured):
-    monkeypatch.setattr(github.fetch, "fetch_value", lambda s: pem)
-
+def _capturing_post(captured):
     def fake_post(url, headers=None, **_kwargs):
         captured["url"] = url
         captured["auth"] = headers["Authorization"]
-        return _CapturingResponse(captured)
+        return _Resp()
 
-    monkeypatch.setattr(github.httpx2, "post", fake_post)
+    return fake_post
+
+
+def _claims(captured, public):
+    return jwt.decode(
+        captured["auth"].removeprefix("Bearer "), public, algorithms=["RS256"]
+    )
 
 
 def test_mint_token_returns_installation_token(monkeypatch):
     private, _ = _pem()
     captured = {}
-    _install_fakes(monkeypatch, private, captured)
-    token = github.mint_token("pem", "123456", "789")
-    assert token == "ghs_installation_token"
+    monkeypatch.setattr(github.httpx2, "post", _capturing_post(captured))
+    assert (
+        github.mint_token(private, "123456", "789") == "ghs_installation_token"
+    )
     assert captured["url"].endswith("/app/installations/789/access_tokens")
 
 
 def test_mint_token_signs_app_id_as_iss(monkeypatch):
     private, public = _pem()
     captured = {}
-    _install_fakes(monkeypatch, private, captured)
-    github.mint_token("pem", "123456", "789")
-
-    jwt_str = captured["auth"].removeprefix("Bearer ")
-    claims = jwt.decode(jwt_str, public, algorithms=["RS256"])
+    monkeypatch.setattr(github.httpx2, "post", _capturing_post(captured))
+    github.mint_token(private, "123456", "789")
+    claims = _claims(captured, public)
     assert claims["iss"] == "123456"
-    # exp must stay under GitHub's 10-minute cap (and be after iat).
     assert 0 < claims["exp"] - claims["iat"] <= 600
 
 
 def test_mint_token_signs_string_client_id_as_iss(monkeypatch):
     private, public = _pem()
     captured = {}
-    _install_fakes(monkeypatch, private, captured)
-    github.mint_token("pem", "Iv1.abc123", "789")
-
-    jwt_str = captured["auth"].removeprefix("Bearer ")
-    claims = jwt.decode(jwt_str, public, algorithms=["RS256"])
-    assert claims["iss"] == "Iv1.abc123"
+    monkeypatch.setattr(github.httpx2, "post", _capturing_post(captured))
+    github.mint_token(private, "Iv1.abc123", "789")
+    assert _claims(captured, public)["iss"] == "Iv1.abc123"
 
 
 def test_mint_token_raises_on_http_error(monkeypatch):
     private, _ = _pem()
-    monkeypatch.setattr(github.fetch, "fetch_value", lambda s: private)
     req = httpx2.Request("POST", "https://api.github.com/x")
     monkeypatch.setattr(
-        github.httpx2,
-        "post",
-        lambda *a, **k: httpx2.Response(401, request=req),
+        github.httpx2, "post", lambda *a, **k: httpx2.Response(401, request=req)
     )
     with pytest.raises(httpx2.HTTPStatusError):
-        github.mint_token("pem", "123", "789")
+        github.mint_token(private, "1", "2")

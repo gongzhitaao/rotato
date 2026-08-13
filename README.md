@@ -16,31 +16,40 @@ uv tool install rotato      # or: pipx install rotato
 
 ## Consumer usage (laptop / VM)
 
-Bootstrap a machine once — no repo checkout required:
+Register a secret on the machine, then use it — no repo checkout required.
 
 ```bash
-# GitLab PAT (or any Bitwarden token) as a git credential
-rotato install <secret-uuid> --user <git-user>
+# a plain token (e.g. a GitLab PAT)
+rotato install <secret-uuid> --name gitlab-pat
 
-# GitHub App mode: mint a short-lived installation token per git op
-rotato install <pem-uuid> --github --app-id <id> --installation-id <id>
+# a GitHub App private key (a short-lived installation token is minted on use)
+rotato install <pem-uuid> --name gh --github --app-id <id> --installation-id <id>
 ```
 
-`install` writes this machine's read-only Bitwarden token to
-`~/.config/rotato/`, records a friendly `name -> uuid` map, and points git's
-credential helper at `rotato`. After that:
+`install` records the secret (and, on first run, prompts for this machine's
+read-only Bitwarden token). Then:
 
 ```bash
-rotato fetch <name|uuid>          # print a secret's current value, read-only
-rotato github-token <name|uuid> --app-id <id> --installation-id <id>
-git -C <a-repo> ls-remote         # git now authenticates via Bitwarden
+rotato print <name|uuid>            # print the usable credential to stdout
+rotato list  secrets               # what's installed here
+rotato list  rotators              # rotators this build supports
+```
+
+Wire git to an installed secret (writes a credential helper that calls
+`rotato print`, so rotations are picked up automatically):
+
+```bash
+rotato setup gitlab <name> --user <git-user>    # gitlab.com
+rotato setup github <name>                      # github.com (App installation token)
+rotato setup git    <name> --user <u> --host <h>  # any git host
+git -C <a-repo> ls-remote                        # git now authenticates via Bitwarden
 ```
 
 ## Server side
 
-The rotation job runs as `rotato run <rotator-name>` (also the container
-entrypoint); `ROTATOR` selects the rotator. Deploying the Cloud Run job,
-scheduler, and alerting is covered in the full documentation.
+`rotato refresh <rotator-name>` runs a rotator (the Cloud Run job entrypoint):
+read current → rotate at the provider → write back to Bitwarden → verify.
+`ROTATOR` env selects the rotator.
 
 ## Documentation
 

@@ -1,23 +1,20 @@
-"""`rotato install` — one-time per-machine consumer setup.
+"""`rotato install` — register a secret on this machine.
 
-Wires git to fetch the current credential from Bitwarden on demand. Unlike the
-old bash bootstrap it copies nothing: with `rotato` already on PATH (e.g. from
-`uv tool install rotato`) it only writes this machine's read-only BWS token, the
-name -> uuid record, and the git credential-helper config. No repo checkout.
+Records a name -> entry in secrets.json so the secret can be used locally
+(`rotato print <name>`, `rotato setup … <name>`). Ensures this machine's
+read-only Bitwarden token exists (prompts on first run, kept thereafter).
+No git, no `--user` — wiring a tool to a secret is `rotato setup`.
 
-Two modes:
-  token   (default)  <uuid> is a token in Bitwarden (e.g. a GitLab PAT).
-  --github           <uuid> is a GitHub App private key (PEM); git gets a
-                     short-lived installation token minted from it. Needs
-                     --app-id and --installation-id; --user is not used.
+Two kinds:
+  token   (default)  the stored value is the credential (e.g. a GitLab PAT).
+  --github           the stored value is a GitHub App private key (PEM); a
+                     short-lived installation token is minted from it on use.
+                     Needs --app-id and --installation-id.
 """
 
 import dataclasses
 import getpass
 import os
-import shlex
-import shutil
-import subprocess
 import sys
 
 from rotato import bws
@@ -26,130 +23,80 @@ from rotato.consumer import config
 
 @dataclasses.dataclass
 class InstallArgs:
-    secret_id: str
-    mode: str = "token"  # "token" or "github"
-    host: str = ""
-    user: str = ""
+    uuid: str
+    name: str = ""
+    github: bool = False
     app_id: str = ""
     installation_id: str = ""
-    name: str = ""
-    git_file: str = ""  # empty -> git --global
     dry_run: bool = False
 
 
-def _rotato_bin() -> str:
-    """Absolute path to this rotato entry point.
-
-    Embedded into the git credential-helper command so it resolves even when git
-    runs with a minimal PATH.
-    """
-    return shutil.which("rotato") or os.path.realpath(sys.argv[0])
-
-
-def _helper_cmd(args: InstallArgs, rotato: str) -> str:
-    # git runs a "!"-helper through the shell, so every interpolated field is
-    # shell-quoted (the rotato path may contain spaces; secret_id/app_id are
-    # normally safe but quoted for good measure).
-    q = shlex.quote
-    if args.mode == "github":
-        return (
-            f"!{q(rotato)} git-credential --github "
-            f"--app-id {q(args.app_id)} "
-            f"--installation-id {q(args.installation_id)} "
-            f"{q(args.secret_id)}"
-        )
-    return f"!{q(rotato)} git-credential {q(args.secret_id)}"
+def _ensure_token() -> None:
+    """Store this machine's read-only BWS token, prompting only if missing."""
+    token_file = config.token_file()
+    if token_file.exists() and token_file.stat().st_size > 0:
+        print(f"token already present at {token_file} — keeping it")
+        return
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token = getpass.getpass("Paste this machine's READ-ONLY BWS token: ")
+    # 0600 from creation, and fchmod to tighten a pre-existing (e.g. empty,
+    # world-readable) file we're about to overwrite — os.open's mode only
+    # applies on create.
+    fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fobj:
+        os.fchmod(fobj.fileno(), 0o600)
+        fobj.write(token)
+    print(f"wrote {token_file} (chmod 600)")
 
 
-def _git_config(args: InstallArgs) -> list[str]:
-    if args.git_file:
-        return ["git", "config", "--file", args.git_file]
-    return ["git", "config", "--global"]
-
-
-def _default_name(args: InstallArgs) -> str:
+def _default_name(uuid: str) -> str:
     """The secret's own key in Bitwarden; best-effort (net/auth may fail)."""
     try:
-        client = bws.BwsClient(access_token=config.read_token())
-        return client.get(args.secret_id).key
+        return bws.BwsClient(access_token=config.read_token()).get(uuid).key
     except Exception:  # pylint: disable=broad-exception-caught
         # A label lookup must never fail the install.
         return ""
 
 
 def run(args: InstallArgs) -> int:
-    default_host = "github.com" if args.mode == "github" else "gitlab.com"
-    host = args.host or default_host
-    rotato = _rotato_bin()
-    helper = _helper_cmd(args, rotato)
-    git_dest = args.git_file or "git --global (~/.gitconfig)"
+    kind = config.KIND_GITHUB_APP if args.github else config.KIND_TOKEN
+    name = args.name or "<name from Bitwarden>"
 
-    recorded_name = args.name or "<name from Bitwarden>"
     print("This will:")
-    print(f"  1. store this machine's read-only token -> {config.token_file()}")
-    print(f"  2. set in {git_dest}:")
-    if args.mode == "token":
-        print(f"       credential.https://{host}.username = {args.user}")
-    print(f"       credential.https://{host}.helper   = {helper}")
     print(
-        f"  3. record {recorded_name} -> "
-        f"{args.secret_id} in {config.secrets_file()}"
+        f"  1. ensure this machine's read-only token -> {config.token_file()}"
     )
+    print(f"  2. record {name} -> {args.uuid} (kind: {kind})")
+    print(f"     in {config.secrets_file()}")
     print()
 
     if args.dry_run:
         print("(dry run — nothing changed)")
         return 0
 
-    # 1. token (prompt only if not already present).
-    token_file = config.token_file()
-    if token_file.exists() and token_file.stat().st_size > 0:
-        print(f"token file already present at {token_file} — keeping it")
-    else:
-        token_file.parent.mkdir(parents=True, exist_ok=True)
-        token = getpass.getpass("Paste this machine's READ-ONLY BWS token: ")
-        # Write with 0600. The mode arg to os.open only applies when *creating*
-        # the file, so fchmod as well to tighten a pre-existing (e.g. empty,
-        # world-readable) token file we're about to overwrite.
-        fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as fobj:
-            os.fchmod(fobj.fileno(), 0o600)
-            fobj.write(token)
-        print(f"wrote {token_file} (chmod 600)")
+    _ensure_token()
 
-    # 2. git config. --replace-all so re-runs (or an existing multi-valued
-    # helper, e.g. from `gh auth setup-git`) collapse to our single value.
-    git_cfg = _git_config(args)
-    if args.mode == "token":
-        key = f"credential.https://{host}.username"
-        subprocess.run([*git_cfg, "--replace-all", key, args.user], check=True)
-    key = f"credential.https://{host}.helper"
-    subprocess.run([*git_cfg, "--replace-all", key, helper], check=True)
-    print(f"configured git credential helper for https://{host}")
-
-    # 3. record name -> uuid so ad-hoc auth can resolve a secret by name.
-    name = args.name or _default_name(args)
-    if name:
-        config.record_secret(name, args.secret_id)
-        print(f"recorded '{name}' -> {args.secret_id}")
-    else:
+    name = args.name or _default_name(args.uuid)
+    if not name:
         print(
-            "warning: no --name given and could not read the secret's name "
-            "from Bitwarden; skipping secrets.json (rerun with --name)",
+            "error: could not read the secret's name from Bitwarden; "
+            "rerun with --name <name>",
             file=sys.stderr,
         )
+        return 1
 
+    entry = config.Entry(
+        uuid=args.uuid,
+        kind=kind,
+        app_id=args.app_id,
+        installation_id=args.installation_id,
+    )
+    config.record_secret(name, entry)
+    print(f"installed '{name}' -> {args.uuid} (kind: {kind})")
     print()
-    if args.mode == "github":
-        print(
-            f"done. test with:  rotato github-token {args.secret_id} "
-            f"--app-id {args.app_id} --installation-id {args.installation_id} "
-            "| head -c 6; echo ..."
-        )
+    print(f"use it:   rotato print {name}")
+    if kind == config.KIND_GITHUB_APP:
+        print(f"wire git: rotato setup github {name}")
     else:
-        print(
-            f"done. test with:  rotato fetch {args.secret_id} "
-            "| head -c 6; echo ..."
-        )
-    print(f"then a real op:   git -C <a-{host}-repo> ls-remote")
+        print(f"wire git: rotato setup gitlab {name} --user <git-user>")
     return 0

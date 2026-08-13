@@ -10,7 +10,7 @@ demand and nothing needs a long-running server.
 /The rotation loop/ (runs on a schedule, unattended):
 
 #+begin_example
-Cloud Scheduler ──(cron)──► Cloud Run job  "rotato <name>"
+Cloud Scheduler ──(cron)──► Cloud Run job  "rotato refresh <name>"
                                   │
    ┌──────────────────────────────┘
    │ 1. read current value  ───────────►  Bitwarden Secrets Manager
@@ -22,8 +22,8 @@ Cloud Scheduler ──(cron)──► Cloud Run job  "rotato <name>"
 /The consumer read path/ (laptop / VM, on every git operation):
 
 #+begin_example
-git push / pull ─► rotato git-credential ─► rotato fetch ─► Bitwarden (read-only)
-                   (git credential helper)                  never written to disk
+git push / pull ─► git credential helper ─► rotato print ─► Bitwarden (read-only)
+                   (calls `rotato print`)                   never written to disk
 #+end_example
 
 ** Invariants
@@ -91,27 +91,30 @@ once — no repo checkout, no ~bws~/~jq~ (the Bitwarden SDK is bundled):
 
 #+begin_src bash
 uv tool install rotato                                # or: pipx install rotato
-rotato install <secret-uuid> --user <git-user>        # add --dry-run to preview
+rotato install <secret-uuid> --name gitlab-pat        # add --dry-run to preview
 #+end_src
 
-~install~ stores this machine's read-only BWS token at =~/.config/rotato/token=
-(chmod 600) and points git at ~rotato git-credential~ for the host (default
-~gitlab.com~; override with ~--host~, or ~--file~ to pin which git-config file it
-writes). It copies nothing — the helper just invokes the installed ~rotato~.
+~install~ registers the secret in =~/.config/rotato/secrets.json= (name, uuid,
+and kind) and, on first run, prompts for this machine's read-only BWS token,
+stored at =~/.config/rotato/token= (chmod 600). It touches no git config and
+needs no ~--user~ — wiring a tool to a secret is ~rotato setup~. The name
+defaults to the secret's key in Bitwarden; override with ~--name~.
 
-It also records the secret's name -> uuid in =~/.config/rotato/secrets.json= (a
-plain JSON object) so ad-hoc auth can address a secret by name instead of a
-uuid. The name defaults to the secret's key in Bitwarden; override with ~--name~.
-Every command that takes a secret accepts a name or a uuid:
+Use an installed secret directly (accepts a name or uuid; errors if not
+installed):
 
 #+begin_src bash
-export SOME_KEY="$(rotato fetch gitlab-pat)"          # by recorded name
-export SOME_KEY="$(rotato fetch <uuid>)"              # or by uuid
+export SOME_KEY="$(rotato print gitlab-pat)"
+rotato list secrets                                   # what's installed here
 #+end_src
 
-- /Another git host/ (a second GitLab, an OAuth-app token): reuse the same
-  helper — rerun ~rotato install <other-uuid> --host <host> --user <user>~.
-- /A non-git credential/: call the primitive directly, ~rotato fetch <name|uuid>~.
+Wire git to it — ~setup~ writes a credential helper that calls ~rotato print~,
+so rotations are picked up automatically:
+
+#+begin_src bash
+rotato setup gitlab gitlab-pat --user <git-user>      # gitlab.com (default host)
+rotato setup git    <name> --user <u> --host <host>   # any other git host
+#+end_src
 
 *** GitHub App (no self-rotating PAT)
 
@@ -120,17 +123,19 @@ standing secret is the App's *private key* (in Bitwarden), and each git op mints
 a fresh ~1h *installation token* from it — nothing long-lived hits disk and
 there is no scheduled rotator job. Per machine, generate a separate private key
 in the App (so you can revoke one machine without re-keying the rest) and seed
-its PEM as a Bitwarden secret. Then:
+its PEM as a Bitwarden secret. Then install it as a ~--github~ secret and wire
+git:
 
 #+begin_src bash
-rotato install <pem-uuid> --github \
+rotato install <pem-uuid> --name gh-laptop --github \
     --app-id <app-or-client-id> --installation-id <installation-id>
+rotato setup github gh-laptop
 #+end_src
 
-~rotato github-token~ signs the JWT and calls the installation-token endpoint;
-~rotato git-credential --github~ emits that token with username ~x-access-token~.
-The App ID and installation ID are not secret — ~install~ embeds them in the git
-helper command. Scope the App tightly (specific repos, ~contents~ read/write).
+The App ID and installation ID (recorded at install time, not secret) let
+~rotato print gh-laptop~ mint the installation token; ~setup github~ wires git to
+call it with username ~x-access-token~. Scope the App tightly (specific repos,
+~contents~ read/write).
 
 * Add a new rotator
 
@@ -168,8 +173,8 @@ new one."
    edit the rotator section (~ROTATOR~, ~SCHEDULE~, its secret id, ~ROTATOR_ENV~),
    then ~deploy/add-rotator.sh deploy/<name>.env~.
 
-The Cloud Run job's entrypoint is ~rotato <name>~, so ~ROTATOR~ selects which
-rotator runs.
+The Cloud Run job runs ~rotato refresh <name>~ (a bare ~rotato <name>~ / the
+~ROTATOR~ env var also work), so ~ROTATOR~ selects which rotator runs.
 
 * Development & tests
 
@@ -200,11 +205,11 @@ src/rotato/core.py                rotate_secret: read -> rotate -> write -> veri
 src/rotato/bws.py                 Bitwarden Secrets Manager client (get/set value)
 src/rotato/rotators/<name>.py     per-secret logic; exposes run(store)
 src/rotato/rotators/__init__.py   name -> rotator registry
-src/rotato/consumer/config.py     ~/.config/rotato paths + name -> uuid registry
-src/rotato/consumer/fetch.py      rotato fetch: read a secret value, read-only
-src/rotato/consumer/github.py     rotato github-token: mint an installation token
-src/rotato/consumer/gitcredential.py  rotato git-credential: git credential helper
-src/rotato/consumer/install.py    rotato install: one-time per-machine setup
+src/rotato/consumer/config.py     ~/.config/rotato paths + installed-secret registry
+src/rotato/consumer/install.py    rotato install: register a secret on this machine
+src/rotato/consumer/credential.py rotato print: emit the usable credential
+src/rotato/consumer/github.py     mint a GitHub App installation token
+src/rotato/consumer/setup.py      rotato setup: wire git to an installed secret
 src/rotato/**/*_test.py           colocated pytest tests (foo.py -> foo_test.py)
 Dockerfile                        multi-stage: uv builds the venv; python:3.14, non-root
 deploy/rotato.env(.example)       the one fill-in-and-run config (gitignored: rotato.env)
