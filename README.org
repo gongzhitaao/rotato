@@ -212,4 +212,7 @@ deploy/setup.sh                   one-time shared infra (APIs, registry, image, 
 deploy/add-rotator.sh             one Cloud Run job + scheduler per secret
 deploy/add-alert.sh               email alert on a rotator's failed executions
 deploy/run.sh                     setup + add-rotator + add-alert, end to end
+README.md                         short PyPI-facing readme (this file is the full one)
+.github/workflows/ci.yml          CI gates (ruff, pylint, pytest)
+.github/workflows/publish.yml     build + publish to PyPI on release (Trusted Publishing)
 #+end_example

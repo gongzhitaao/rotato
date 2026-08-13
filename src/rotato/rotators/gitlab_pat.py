@@ -17,10 +17,7 @@ def _rotate(old: str) -> str:
     host = os.environ.get("GITLAB_HOST", "https://gitlab.com")
     days = int(os.environ.get("EXPIRY_DAYS", "30"))
     expires_at = (
-        (
-            datetime.datetime.now(datetime.timezone.utc)
-            + datetime.timedelta(days=days)
-        )
+        (datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=days))
         .date()
         .isoformat()
     )
