@@ -1,3 +1,5 @@
+"""Tests for consumer paths and the name -> uuid registry."""
+
 import pytest
 
 import rotato.consumer.config as config

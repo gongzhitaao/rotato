@@ -1,3 +1,5 @@
+"""Tests for the git credential-helper adapter."""
+
 import rotato.consumer.gitcredential as gc
 
 

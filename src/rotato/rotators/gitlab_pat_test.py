@@ -1,3 +1,8 @@
+"""Tests for the GitLab PAT rotator."""
+
+# Tests exercise the module's private _rotate and a fake store's internals.
+# pylint: disable=protected-access
+
 import httpx
 import pytest
 

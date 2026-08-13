@@ -20,9 +20,9 @@ repos:
 
       - id: pylint
         name: pylint
-        # Run the exact CI command over the package, not per staged file, so
-        # cross-module checks and the _test.py ignore behave identically.
-        entry: uv run pylint src/rotato --ignore-patterns=.*_test\.py
+        # Run the exact CI command over the whole package, not per staged file,
+        # so cross-module checks behave identically (tests are linted too).
+        entry: uv run pylint src/rotato
         language: system
         files: '^src/rotato/.*\.py$'
         pass_filenames: false

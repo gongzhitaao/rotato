@@ -1,3 +1,5 @@
+"""Tests for minting GitHub App installation tokens."""
+
 import cryptography.hazmat.primitives.asymmetric.rsa as rsa
 import jwt
 import pytest
@@ -34,7 +36,7 @@ class _CapturingResponse:
 def _install_fakes(monkeypatch, pem, captured):
     monkeypatch.setattr(github.fetch, "fetch_value", lambda s: pem)
 
-    def fake_post(url, headers=None, **kwargs):
+    def fake_post(url, headers=None, **_kwargs):
         captured["url"] = url
         captured["auth"] = headers["Authorization"]
         return _CapturingResponse(captured)
@@ -77,7 +79,7 @@ def test_mint_token_raises_on_http_error(monkeypatch):
     private, _ = _pem()
     monkeypatch.setattr(github.fetch, "fetch_value", lambda s: private)
 
-    def boom(url, headers=None, **kwargs):
+    def boom(*_args, **_kwargs):
         class R:
             def raise_for_status(self):
                 raise RuntimeError("401")
