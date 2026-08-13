@@ -13,7 +13,7 @@ lives on disk). `install` wires it into git config for you, e.g.:
                 --app-id .. --installation-id .. <pem>"
 """
 
-from . import fetch, github
+from rotato.consumer import fetch, github
 
 
 def emit_credential(

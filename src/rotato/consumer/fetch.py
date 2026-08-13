@@ -6,10 +6,10 @@ Authenticates with this machine's read-only BWS token and resolves a friendly
 name to its uuid via secrets.json.
 """
 
-from ..bws import BwsClient
-from . import config
+from rotato import bws
+from rotato.consumer import config
 
 
 def fetch_value(name_or_uuid: str) -> str:
     secret_id = config.resolve(name_or_uuid)
-    return BwsClient(access_token=config.read_token()).get_value(secret_id)
+    return bws.BwsClient(access_token=config.read_token()).get_value(secret_id)

@@ -19,8 +19,8 @@ import shutil
 import subprocess
 import sys
 
-from ..bws import BwsClient
-from . import config
+from rotato import bws
+from rotato.consumer import config
 
 
 @dataclasses.dataclass
@@ -64,7 +64,7 @@ def _git_config(args: InstallArgs) -> list[str]:
 def _default_name(args: InstallArgs) -> str:
     """The secret's own key in Bitwarden; best-effort (net/auth may fail)."""
     try:
-        client = BwsClient(access_token=config.read_token())
+        client = bws.BwsClient(access_token=config.read_token())
         return client.get(args.secret_id).key
     except Exception:  # pylint: disable=broad-exception-caught
         # A label lookup must never fail the install.

@@ -12,7 +12,7 @@ import time
 import httpx
 import jwt
 
-from . import fetch
+from rotato.consumer import fetch
 
 DEFAULT_API = "https://api.github.com"
 

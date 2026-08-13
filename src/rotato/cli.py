@@ -17,9 +17,8 @@ import argparse
 import os
 import sys
 
-from .bws import BwsClient
-from .consumer import fetch, gitcredential, github, install
-from .rotators import REGISTRY
+from rotato import bws, rotators
+from rotato.consumer import fetch, gitcredential, github, install
 
 _SUBCOMMANDS = {"run", "fetch", "github-token", "git-credential", "install"}
 
@@ -31,14 +30,14 @@ def _run_rotator(name: str) -> int:
             file=sys.stderr,
         )
         return 2
-    run = REGISTRY.get(name)
+    run = rotators.REGISTRY.get(name)
     if run is None:
         print(f"unknown rotator: {name}", file=sys.stderr)
         return 2
     # Let failures propagate: the traceback (incl. any RotationError break-glass
     # value) goes to stderr -> Cloud Logging, and the non-zero exit trips the
     # failure alert.
-    run(BwsClient())
+    run(bws.BwsClient())
     return 0
 
 

@@ -10,7 +10,7 @@ import os
 
 import httpx
 
-from ..core import SecretStore, rotate_secret
+from rotato import core
 
 
 def _rotate(old: str) -> str:
@@ -34,6 +34,6 @@ def _rotate(old: str) -> str:
     return resp.json()["token"]
 
 
-def run(store: SecretStore) -> None:
+def run(store: core.SecretStore) -> None:
     secret_id = os.environ["GITLAB_PAT_SECRET_ID"]
-    rotate_secret(store, secret_id, _rotate)
+    core.rotate_secret(store, secret_id, _rotate)

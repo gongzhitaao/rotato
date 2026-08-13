@@ -142,15 +142,15 @@ new one."
 
    #+begin_src python
    import os
-   from ..core import SecretStore, rotate_secret
+   from rotato import core
 
    def _rotate(old: str) -> str:
        # call the provider with `old`, do whatever mint/revoke dance it needs,
        # and return the NEW secret value.
        ...
 
-   def run(store: SecretStore) -> None:
-       rotate_secret(store, os.environ["MYSECRET_ID"], _rotate)
+   def run(store: core.SecretStore) -> None:
+       core.rotate_secret(store, os.environ["MYSECRET_ID"], _rotate)
    #+end_src
 
    Add a colocated ~<name>_test.py~ next to it (mock the provider + a fake store).
@@ -185,11 +185,12 @@ uv run ruff check           # lint + import sort
 uv run pylint src/rotato --ignore-patterns='.*_test\.py'   # Google config
 #+end_src
 
-~.pylintrc~ is Google's [[https://google.github.io/styleguide/pylintrc][published config]], used verbatim. Each module has a
-colocated ~<name>_test.py~ (Google style): pytest finds them via ~python_files~,
-they're excluded from pylint, and stripped from the Docker image. Tests mock the
-Bitwarden client and the GitLab HTTP call, so they touch no real service. CI
-(~.github/workflows/ci.yml~) runs the same four gates on push and PRs.
+~.pylintrc~ is Google's [[https://google.github.io/styleguide/pylintrc][published config]] plus the [[https://pypi.org/project/pylint-google-style/][pylint-google-style]]
+plugins (module-over-symbol and absolute-over-relative imports), all enabled.
+Each module has a colocated ~<name>_test.py~ (Google style): pytest finds them
+via ~python_files~, they're linted too, and stripped from the Docker image.
+Tests mock the Bitwarden client and the GitLab HTTP call, so they touch no real
+service. CI (~.github/workflows/ci.yml~) runs the same four gates on push and PRs.
 
 * Layout
 
