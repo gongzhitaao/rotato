@@ -20,12 +20,16 @@ def _raw_value(uuid: str) -> str:
 
 
 def _protocol_safe(value: str) -> str:
-    """Refuse a value that would corrupt git's line-oriented credential wire.
+    """Return a value safe to emit on git's line-oriented credential wire.
 
-    A newline/carriage-return/NUL lets the rest of the value be reparsed by git
-    as attribute lines — refuse rather than emit a truncated or attacker-shaped
+    A trailing newline/carriage-return is a benign artifact of how the secret
+    was stored (piped in, pasted from a file) and cannot corrupt the protocol —
+    git's helper terminates the value line itself — so strip it. An *interior*
+    newline/carriage-return/NUL, however, lets the rest of the value be reparsed
+    by git as attribute lines; refuse rather than emit an attacker-shaped
     credential.
     """
+    value = value.rstrip("\r\n")
     if any(c in value for c in ("\n", "\r", "\0")):
         raise SystemExit(
             "rotato: credential contains a control character; refusing to emit "

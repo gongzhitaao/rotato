@@ -52,6 +52,14 @@ def _cmd_install(args) -> int:
             file=sys.stderr,
         )
         return 2
+    if (args.app_id or args.installation_id) and not args.github:
+        print(
+            "error: --app-id/--installation-id only apply with --github; "
+            "add --github to install a GitHub App (they are ignored for a "
+            "plain token)",
+            file=sys.stderr,
+        )
+        return 2
     return install.run(
         install.InstallArgs(
             uuid=args.uuid,

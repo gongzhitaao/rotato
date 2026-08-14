@@ -67,6 +67,11 @@ def test_install_github_requires_app_id(capsys):
     assert "--app-id" in capsys.readouterr().err
 
 
+def test_install_app_id_without_github_errors(capsys):
+    assert cli.main(["install", "some-uuid", "--app-id", "1"]) == 2
+    assert "--github" in capsys.readouterr().err
+
+
 def test_install_dry_run(monkeypatch, capsys, tmp_path):
     monkeypatch.setenv("ROTATO_CONFIG_DIR", str(tmp_path))
     assert cli.main(["install", "some-uuid", "--name", "n", "--dry-run"]) == 0
