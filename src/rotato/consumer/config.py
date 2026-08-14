@@ -83,7 +83,10 @@ def load_secrets() -> dict[str, Entry]:
     """Installed entries by name; an empty dict if absent or unparseable."""
     try:
         data = json.loads(secrets_file().read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
+        # ValueError covers JSONDecodeError and a non-UTF-8 UnicodeDecodeError;
+        # never let a corrupt file crash a read (it also runs during shell
+        # completion, which must not error).
         return {}
     if not isinstance(data, dict):
         return {}

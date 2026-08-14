@@ -89,6 +89,12 @@ def test_load_secrets_missing_is_empty():
     assert not config.load_secrets()
 
 
+def test_load_secrets_non_utf8_is_empty(tmp_path):
+    # a corrupt (non-UTF-8) file must not crash a read (completion needs this).
+    (tmp_path / "secrets.json").write_bytes(b"\xff\xfe not valid utf-8")
+    assert not config.load_secrets()
+
+
 def test_read_token(tmp_path, monkeypatch):
     token = tmp_path / "token"
     token.write_text("  sekret\n")
