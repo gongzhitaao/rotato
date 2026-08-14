@@ -45,6 +45,33 @@ rotato setup git    <name> --user <u> --host <h>  # any git host
 git -C <a-repo> ls-remote                        # git now authenticates via Bitwarden
 ```
 
+## Shell completion
+
+`rotato` supports tab-completion via
+[argcomplete](https://pypi.org/project/argcomplete/) — including **installed
+secret names** for `print`/`setup` and **rotator names** for `refresh` (names
+only; never secret values).
+
+The `register-python-argcomplete` generator ships with argcomplete, not rotato,
+so `uv tool install rotato` doesn't put it on PATH — install argcomplete as a
+tool too (once), then register `rotato` in your shell rc:
+
+```bash
+uv tool install argcomplete
+
+# bash — ~/.bashrc
+eval "$(register-python-argcomplete rotato)"
+
+# zsh — ~/.zshrc (with compinit loaded)
+eval "$(register-python-argcomplete -s zsh rotato)"
+
+# fish
+register-python-argcomplete -s fish rotato > ~/.config/fish/completions/rotato.fish
+```
+
+Then `rotato <tab>` lists subcommands, `rotato print <tab>` lists installed
+secrets, `rotato setup <tab>` lists `github gitlab git`, and so on.
+
 ## Server side
 
 `rotato refresh <rotator-name>` runs a rotator (the Cloud Run job entrypoint):

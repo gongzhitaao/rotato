@@ -94,6 +94,16 @@ def _cmd_list(args) -> int:
     return 0
 
 
+def _complete_secrets(prefix, **_kwargs):
+    """Tab-complete installed secret names (never their values)."""
+    return [name for name in config.load_secrets() if name.startswith(prefix)]
+
+
+def _complete_rotators(prefix, **_kwargs):
+    """Tab-complete rotator names from the registry."""
+    return [name for name in rotators.REGISTRY if name.startswith(prefix)]
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rotato")
     sub = parser.add_subparsers(dest="command")
@@ -114,12 +124,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_install.set_defaults(func=_cmd_install)
 
     p_print = sub.add_parser("print", help="print the usable credential")
-    p_print.add_argument("secret", help="installed name or uuid")
+    p_print.add_argument(
+        "secret", help="installed name or uuid"
+    ).completer = _complete_secrets
     p_print.set_defaults(func=_cmd_print)
 
     p_setup = sub.add_parser("setup", help="wire git to an installed secret")
     p_setup.add_argument("target", choices=["github", "gitlab", "git"])
-    p_setup.add_argument("secret", help="installed name or uuid")
+    p_setup.add_argument(
+        "secret", help="installed name or uuid"
+    ).completer = _complete_secrets
     p_setup.add_argument("--user", help="git username (required, gitlab/git)")
     p_setup.add_argument("--host", help="git host (required for 'git')")
     p_setup.add_argument("--file", help="git config file (default: --global)")
@@ -131,13 +145,25 @@ def _build_parser() -> argparse.ArgumentParser:
     p_list.set_defaults(func=_cmd_list)
 
     p_refresh = sub.add_parser("refresh", help="run a rotator (server-side)")
-    p_refresh.add_argument("name", nargs="?", help="rotator name (or ROTATOR)")
+    p_refresh.add_argument(
+        "name", nargs="?", help="rotator name (or ROTATOR)"
+    ).completer = _complete_rotators
     p_refresh.set_defaults(func=_cmd_refresh)
 
     return parser
 
 
 def main(argv=None) -> int:
+    parser = _build_parser()
+
+    # Shell completion (argcomplete). Imported and invoked only while actually
+    # completing, so normal runs and the server-side refresh don't pay for it.
+    # Activate with: eval "$(register-python-argcomplete rotato)"
+    if os.environ.get("_ARGCOMPLETE"):
+        import argcomplete  # pylint: disable=import-outside-toplevel
+
+        argcomplete.autocomplete(parser)
+
     argv = list(sys.argv[1:] if argv is None else argv)
 
     # Legacy: bare `rotato <name>` (or ROTATOR env) still runs a rotator, so the
@@ -149,5 +175,5 @@ def main(argv=None) -> int:
     if legacy:
         return _run_rotator(argv[0] if argv else os.environ.get("ROTATOR", ""))
 
-    args = _build_parser().parse_args(argv)
+    args = parser.parse_args(argv)
     return args.func(args)

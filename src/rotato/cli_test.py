@@ -1,5 +1,13 @@
 """Tests for the rotato CLI dispatcher."""
 
+# Completion tests reach the module's private completer helpers and introspect
+# argparse internals.
+# pylint: disable=protected-access
+
+import argparse
+
+import argcomplete
+
 import rotato.cli as cli
 
 # --- rotator dispatch (server side) ---
@@ -86,3 +94,65 @@ def test_list_secrets(monkeypatch, capsys, tmp_path):
     cli.config.record_secret("gl", cli.config.Entry(uuid="U"))
     assert cli.main(["list", "secrets"]) == 0
     assert "gl\ttoken\tU" in capsys.readouterr().out
+
+
+# --- shell completion ---
+
+
+def test_complete_secrets(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROTATO_CONFIG_DIR", str(tmp_path))
+    cli.config.record_secret("gitlab-pat", cli.config.Entry(uuid="U1"))
+    cli.config.record_secret("npm-token", cli.config.Entry(uuid="U2"))
+    assert cli._complete_secrets("gi") == ["gitlab-pat"]
+    assert set(cli._complete_secrets("")) == {"gitlab-pat", "npm-token"}
+
+
+def test_complete_rotators(monkeypatch):
+    monkeypatch.setattr(
+        cli.rotators, "REGISTRY", {"gitlab-pat": None, "aws-key": None}
+    )
+    assert cli._complete_rotators("gi") == ["gitlab-pat"]
+    assert set(cli._complete_rotators("")) == {"gitlab-pat", "aws-key"}
+
+
+def _subparser(parser, name):
+    action = next(
+        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+    )
+    return action.choices[name]
+
+
+def _completer_of(subparser, dest):
+    action = next(a for a in subparser._actions if a.dest == dest)
+    return getattr(action, "completer", None)
+
+
+def test_completers_attached_to_actions():
+    parser = cli._build_parser()
+    assert (
+        _completer_of(_subparser(parser, "print"), "secret")
+        is cli._complete_secrets
+    )
+    assert (
+        _completer_of(_subparser(parser, "setup"), "secret")
+        is cli._complete_secrets
+    )
+    assert (
+        _completer_of(_subparser(parser, "refresh"), "name")
+        is cli._complete_rotators
+    )
+
+
+def test_main_invokes_autocomplete_under_env_guard(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        argcomplete, "autocomplete", lambda parser: seen.setdefault("p", parser)
+    )
+    monkeypatch.setattr(cli.rotators, "REGISTRY", {})
+    # Without the env var the guard skips autocomplete...
+    assert cli.main(["list", "rotators"]) == 0
+    assert "p" not in seen
+    # ...with it set, main invokes autocomplete on the built parser.
+    monkeypatch.setenv("_ARGCOMPLETE", "1")
+    assert cli.main(["list", "rotators"]) == 0
+    assert isinstance(seen.get("p"), argparse.ArgumentParser)
