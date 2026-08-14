@@ -62,6 +62,19 @@ def test_rejects_control_char_value(monkeypatch):
         credential.usable_credential("gl")
 
 
+def test_strips_trailing_newline(monkeypatch):
+    config.record_secret("gl", config.Entry(uuid="U", kind=config.KIND_TOKEN))
+    monkeypatch.setattr(credential, "_raw_value", lambda u: "PATVALUE\n")
+    assert credential.usable_credential("gl") == "PATVALUE"
+
+
+def test_rejects_leading_newline(monkeypatch):
+    config.record_secret("gl", config.Entry(uuid="U", kind=config.KIND_TOKEN))
+    monkeypatch.setattr(credential, "_raw_value", lambda u: "\nPATVALUE")
+    with pytest.raises(SystemExit):
+        credential.usable_credential("gl")
+
+
 def test_raw_value_reads_token_and_fetches(monkeypatch):
     monkeypatch.setattr(credential.config, "read_token", lambda: "TOK")
     seen = {}
