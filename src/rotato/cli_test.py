@@ -5,52 +5,53 @@
 # pylint: disable=protected-access
 
 import argparse
+import types
 
 import argcomplete
 
 import rotato.cli as cli
 
-# --- rotator dispatch (server side) ---
+# --- tag-driven batch rotation (server side) ---
 
 
-def _stub_registry(monkeypatch):
-    seen = {}
+def _stub_batch(monkeypatch, report=None):
+    """Wire refresh to a fake Bitwarden client + a canned roster report."""
+    monkeypatch.setenv("BWS_ORGANIZATION_ID", "org")
     monkeypatch.setattr(
-        cli.rotators,
-        "REGISTRY",
-        {"myrot": lambda store: seen.update(store=store)},
+        cli.bws,
+        "BwsClient",
+        lambda: types.SimpleNamespace(list_secrets=lambda org: ["S"]),
     )
-    monkeypatch.setattr(cli.bws, "BwsClient", lambda: "CLIENT")
-    return seen
+    rep = report or cli.roster.Report(
+        rotated=[cli.roster.Item("i", "k", "gitlab", "rotated")]
+    )
+    monkeypatch.setattr(cli.roster, "rotate_tagged", lambda *a, **k: rep)
+    return rep
 
 
-def test_legacy_bare_name_dispatches(monkeypatch):
-    seen = _stub_registry(monkeypatch)
-    assert cli.main(["myrot"]) == 0
-    assert seen["store"] == "CLIENT"
+def test_refresh_runs_batch(monkeypatch, capsys):
+    _stub_batch(monkeypatch)
+    assert cli.main(["refresh"]) == 0
+    assert "roster: rotated 1" in capsys.readouterr().out
 
 
-def test_refresh_dispatches(monkeypatch):
-    seen = _stub_registry(monkeypatch)
-    assert cli.main(["refresh", "myrot"]) == 0
-    assert seen["store"] == "CLIENT"
-
-
-def test_refresh_env_fallback(monkeypatch):
-    seen = _stub_registry(monkeypatch)
-    monkeypatch.setenv("ROTATOR", "myrot")
+def test_bare_rotato_runs_batch(monkeypatch):
+    _stub_batch(monkeypatch)
     assert cli.main([]) == 0
-    assert seen["store"] == "CLIENT"
 
 
-def test_unknown_rotator_returns_2(capsys):
-    assert cli.main(["definitely-not-a-rotator"]) == 2
-    assert "unknown rotator" in capsys.readouterr().err
+def test_refresh_missing_org_returns_2(monkeypatch, capsys):
+    monkeypatch.delenv("BWS_ORGANIZATION_ID", raising=False)
+    assert cli.main(["refresh"]) == 2
+    assert "BWS_ORGANIZATION_ID" in capsys.readouterr().err
 
 
-def test_refresh_no_name_returns_2(monkeypatch):
-    monkeypatch.delenv("ROTATOR", raising=False)
-    assert cli.main([]) == 2
+def test_refresh_failed_report_returns_1(monkeypatch):
+    report = cli.roster.Report(
+        failed=[cli.roster.Item("i", "k", "gitlab", "failed", "boom")]
+    )
+    _stub_batch(monkeypatch, report)
+    assert cli.main(["refresh"]) == 1
 
 
 # --- consumer subcommands ---
@@ -86,12 +87,31 @@ def test_setup_dry_run(monkeypatch, capsys, tmp_path):
     assert "dry run" in capsys.readouterr().out
 
 
-def test_list_rotators(monkeypatch, capsys):
-    monkeypatch.setattr(
-        cli.rotators, "REGISTRY", {"gitlab-pat": lambda s: None}
+def _fake_registry(monkeypatch):
+    knob = cli.rotators.Knob("host", "https://gitlab.com", "instance URL")
+    rotator = cli.rotators.Rotator(
+        name="gitlab",
+        rotate=lambda old, cfg: old,
+        knobs=(knob,),
+        help="GitLab PAT",
     )
+    monkeypatch.setattr(cli.rotators, "REGISTRY", {"gitlab": rotator})
+
+
+def test_list_rotators(monkeypatch, capsys):
+    _fake_registry(monkeypatch)
     assert cli.main(["list", "rotators"]) == 0
-    assert "gitlab-pat" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "gitlab" in out and "GitLab PAT" in out
+
+
+def test_list_tags(monkeypatch, capsys):
+    _fake_registry(monkeypatch)
+    assert cli.main(["list", "tags"]) == 0
+    out = capsys.readouterr().out
+    assert "#rotato=<type>" in out
+    assert "#host=<v>" in out
+    assert "https://gitlab.com" in out
 
 
 def test_list_secrets(monkeypatch, capsys, tmp_path):
@@ -110,14 +130,6 @@ def test_complete_secrets(monkeypatch, tmp_path):
     cli.config.record_secret("npm-token", cli.config.Entry(uuid="U2"))
     assert cli._complete_secrets("gi") == ["gitlab-pat"]
     assert set(cli._complete_secrets("")) == {"gitlab-pat", "npm-token"}
-
-
-def test_complete_rotators(monkeypatch):
-    monkeypatch.setattr(
-        cli.rotators, "REGISTRY", {"gitlab-pat": None, "aws-key": None}
-    )
-    assert cli._complete_rotators("gi") == ["gitlab-pat"]
-    assert set(cli._complete_rotators("")) == {"gitlab-pat", "aws-key"}
 
 
 def _subparser(parser, name):
@@ -141,10 +153,6 @@ def test_completers_attached_to_actions():
     assert (
         _completer_of(_subparser(parser, "setup"), "secret")
         is cli._complete_secrets
-    )
-    assert (
-        _completer_of(_subparser(parser, "refresh"), "name")
-        is cli._complete_rotators
     )
 
 

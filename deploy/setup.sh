@@ -54,7 +54,7 @@ gcloud iam service-accounts create rotato-sched --display-name="rotato scheduler
 
 # IAM service-account creation is eventually consistent — wait until each SA is
 # visible before referencing it in a binding (avoids "does not exist", including
-# when run.sh proceeds straight into add-rotator.sh).
+# when run.sh proceeds straight into deploy-rotator.sh).
 for sa in "$JOB_SA" "$SCHED_SA"; do
   for _ in $(seq 1 15); do
     gcloud iam service-accounts describe "$sa" >/dev/null 2>&1 && break

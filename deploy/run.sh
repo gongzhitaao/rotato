@@ -6,6 +6,6 @@ set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 ENVFILE="${1:-$HERE/rotato.env}"
 
-"$HERE/setup.sh"        "$ENVFILE"
-"$HERE/add-rotator.sh"  "$ENVFILE"
-"$HERE/add-alert.sh"    "$ENVFILE"
+"$HERE/setup.sh"          "$ENVFILE"
+"$HERE/deploy-rotator.sh" "$ENVFILE"
+"$HERE/add-alert.sh"      "$ENVFILE"

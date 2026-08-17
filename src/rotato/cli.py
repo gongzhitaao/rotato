@@ -2,47 +2,49 @@
 
 One entry point (the `rotato` console script) with two surfaces:
 
-  consumer  rotato install <uuid> …        register a secret on this machine
-            rotato print <name|uuid>        print the usable credential
-            rotato setup github|gitlab|git  wire git to an installed secret
-            rotato list secrets|rotators    list installed secrets / rotators
-  server    rotato refresh <name>           run a rotator (Cloud Run job)
+  consumer  rotato install <uuid> …          register a secret on this machine
+            rotato print <name|uuid>          print the usable credential
+            rotato setup github|gitlab|git    wire git to an installed secret
+            rotato list secrets|rotators|tags  list installed / supported things
+  server    rotato refresh                    rotate every tagged secret (job)
 
-Backward-compatible: a bare `rotato <name>` (or the ROTATOR env var) with no
-recognized subcommand still runs a rotator, so the container ENTRYPOINT keeps
-working unchanged.
+The server side is tag-driven: `refresh` scans the whole Bitwarden project and
+rotates each secret whose note enrolls it (`#rotato=<type>`). A bare `rotato`
+(the container ENTRYPOINT with no args) does the same, so no per-secret config
+is baked into the job.
 """
 
 import argparse
+import datetime
 import os
 import sys
 
-from rotato import bws, rotators
+from rotato import bws, roster, rotators, tags
 from rotato.consumer import config, credential, install, setup
 
 _SUBCOMMANDS = {"install", "print", "setup", "list", "refresh"}
 
 
-def _run_rotator(name: str) -> int:
-    if not name:
+def _refresh_batch() -> int:
+    org = os.environ.get("BWS_ORGANIZATION_ID", "")
+    if not org:
         print(
-            "usage: rotato refresh <rotator-name>  (or set ROTATOR)",
-            file=sys.stderr,
+            "error: BWS_ORGANIZATION_ID is required to rotate", file=sys.stderr
         )
         return 2
-    run = rotators.REGISTRY.get(name)
-    if run is None:
-        print(f"unknown rotator: {name}", file=sys.stderr)
-        return 2
-    # Let failures propagate: the traceback (incl. any RotationError break-glass
-    # value) goes to stderr -> Cloud Logging, and the non-zero exit trips the
-    # failure alert.
-    run(bws.BwsClient())
-    return 0
+    stale_after = float(
+        os.environ.get("STALE_AFTER_DAYS", roster.DEFAULT_STALE_AFTER_DAYS)
+    )
+    client = bws.BwsClient()
+    secrets = client.list_secrets(org)
+    now = datetime.datetime.now(datetime.UTC)
+    report = roster.rotate_tagged(client, secrets, now, stale_after)
+    return roster.render(report)
 
 
 def _cmd_refresh(args) -> int:
-    return _run_rotator(args.name or os.environ.get("ROTATOR", ""))
+    del args  # refresh takes no options; batch config comes from the env
+    return _refresh_batch()
 
 
 def _cmd_install(args) -> int:
@@ -90,10 +92,27 @@ def _cmd_setup(args) -> int:
     )
 
 
+def _print_tags() -> None:
+    """Document the note-tag grammar and each rotator's config knobs."""
+    print(f"#{tags.ENROLL}=<type>\trequired; enroll for rotation (type below)")
+    print(
+        f"#{roster.CADENCE_TAG}=<days>\toptional; max age before a STALE alert "
+        f"(default {int(roster.DEFAULT_STALE_AFTER_DAYS)})"
+    )
+    for name in sorted(rotators.REGISTRY):
+        rotator = rotators.REGISTRY[name]
+        print(f"\n{name}: {rotator.help}")
+        for knob in rotator.knobs:
+            print(f"  #{knob.name}=<v>\t{knob.help} (default {knob.default})")
+
+
 def _cmd_list(args) -> int:
     if args.what == "rotators":
         for name in sorted(rotators.REGISTRY):
-            print(name)
+            print(f"{name}\t{rotators.REGISTRY[name].help}")
+        return 0
+    if args.what == "tags":
+        _print_tags()
         return 0
     secrets = config.load_secrets()
     for name in sorted(secrets):
@@ -105,11 +124,6 @@ def _cmd_list(args) -> int:
 def _complete_secrets(prefix, **_kwargs):
     """Tab-complete installed secret names (never their values)."""
     return [name for name in config.load_secrets() if name.startswith(prefix)]
-
-
-def _complete_rotators(prefix, **_kwargs):
-    """Tab-complete rotator names from the registry."""
-    return [name for name in rotators.REGISTRY if name.startswith(prefix)]
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -148,14 +162,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_setup.add_argument("--dry-run", action="store_true")
     p_setup.set_defaults(func=_cmd_setup)
 
-    p_list = sub.add_parser("list", help="list installed secrets / rotators")
-    p_list.add_argument("what", choices=["secrets", "rotators"])
+    p_list = sub.add_parser("list", help="list installed / supported things")
+    p_list.add_argument("what", choices=["secrets", "rotators", "tags"])
     p_list.set_defaults(func=_cmd_list)
 
-    p_refresh = sub.add_parser("refresh", help="run a rotator (server-side)")
-    p_refresh.add_argument(
-        "name", nargs="?", help="rotator name (or ROTATOR)"
-    ).completer = _complete_rotators
+    p_refresh = sub.add_parser(
+        "refresh", help="rotate every tagged secret (server-side)"
+    )
     p_refresh.set_defaults(func=_cmd_refresh)
 
     return parser
@@ -174,14 +187,14 @@ def main(argv=None) -> int:
 
     argv = list(sys.argv[1:] if argv is None else argv)
 
-    # Legacy: bare `rotato <name>` (or ROTATOR env) still runs a rotator, so the
-    # container ENTRYPOINT ["rotato"] keeps working. Only fall through when the
-    # first token is neither a known subcommand nor an option.
+    # A bare `rotato` (the container ENTRYPOINT with no args) rotates every
+    # tagged secret, so the Cloud Run job needs no per-secret arguments. Only
+    # fall through when the first token is neither a subcommand nor an option.
     legacy = not argv or (
         argv[0] not in _SUBCOMMANDS and not argv[0].startswith("-")
     )
     if legacy:
-        return _run_rotator(argv[0] if argv else os.environ.get("ROTATOR", ""))
+        return _refresh_batch()
 
     args = parser.parse_args(argv)
     return args.func(args)

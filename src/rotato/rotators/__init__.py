@@ -1,7 +1,13 @@
-"""Registry mapping rotator name -> run(store)."""
+"""Registry mapping rotator type -> Rotator (rotate fn + declared config knobs).
 
-from . import gitlab_pat
+The rotator's ``name`` is the value of a secret's ``#rotato=<name>`` note tag.
+"""
 
-REGISTRY = {
-    "gitlab-pat": gitlab_pat.run,
+from . import gitlab
+from .base import Knob, Rotator
+
+REGISTRY: dict[str, Rotator] = {
+    gitlab.ROTATOR.name: gitlab.ROTATOR,
 }
+
+__all__ = ["Knob", "Rotator", "REGISTRY"]
