@@ -28,7 +28,10 @@ ENV_PAIRS="${ENV_PAIRS},STALE_AFTER_DAYS=${STALE_AFTER_DAYS:-21}"
 echo "== cloud run job: ${JOB} =="
 # max-retries=0: retrying a half-completed rotation authenticates with the
 # already-revoked old token and cannot recover -- it only hides the failure.
-# The job rotates every tagged secret, so give it more headroom than a single.
+# Rotations run sequentially (~<=30s each), so task-timeout must scale with the
+# number of enrolled secrets; raise it if a run risks exceeding 600s. A timeout
+# mid-batch is safe -- already-rotated secrets are verified, the rest retry next
+# run -- but marks the execution failed.
 gcloud run jobs deploy "$JOB" --image="$IMAGE_URI" --region="$REGION" \
   --service-account="$JOB_SA" --max-retries=0 --task-timeout=600s \
   --args="refresh" \

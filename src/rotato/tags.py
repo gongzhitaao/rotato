@@ -8,7 +8,9 @@ the rotator; a note without it is not enrolled for rotation.
     #rotato=gitlab  #host=https://gitlab.example.com  #expiry=30
 
 Kept deliberately dumb (one regex, no ordering, tolerates surrounding prose)
-because notes are human-edited. Values cannot contain whitespace or ``#``.
+because notes are human-edited. Values cannot contain whitespace or ``#``, and
+trailing sentence punctuation is stripped so ``rotate it: #rotato=gitlab.`` in
+prose still yields ``gitlab``.
 """
 
 import re
@@ -16,11 +18,15 @@ import re
 ENROLL = "rotato"
 
 _TAG = re.compile(r"#(\w+)=([^\s#]+)")
+_TRAILING_PUNCT = ".,;:!?"
 
 
 def parse(note: str) -> dict[str, str]:
     """Extract every ``#key=value`` tag from a note into a dict."""
-    return dict(_TAG.findall(note or ""))
+    return {
+        key: value.rstrip(_TRAILING_PUNCT)
+        for key, value in _TAG.findall(note or "")
+    }
 
 
 def rotator_type(parsed: dict[str, str]) -> str | None:

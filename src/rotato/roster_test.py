@@ -55,15 +55,14 @@ def test_rotates_tagged_secret(monkeypatch):
     assert roster.render(report) == 0
 
 
-def test_untagged_secret_reported_not_rotated(monkeypatch):
+def test_untagged_secret_skipped(monkeypatch):
     _reg(monkeypatch)
     store = _FakeStore({"s1": "OLD"})
     report = roster.rotate_tagged(
         store, [_sec("s1", "misc", "no tags here")], _NOW
     )
-    assert store._v["s1"] == "OLD"
-    assert report.untagged == ["misc"]
-    assert not report.rotated
+    assert store._v["s1"] == "OLD"  # untouched
+    assert not report.rotated and not report.failed and not report.stale
 
 
 def test_unknown_type_is_failure(monkeypatch):
@@ -119,3 +118,43 @@ def test_config_passed_from_tags(monkeypatch):
     secret = _sec("s", "s", "#rotato=gitlab #host=https://gl.internal")
     roster.rotate_tagged(store, [secret], _NOW)
     assert seen["host"] == "https://gl.internal"
+
+
+def test_naive_timestamp_does_not_crash_batch(monkeypatch):
+    # A tz-naive revision_date must not raise out of the loop (assume UTC).
+    _reg(monkeypatch)
+    store = _FakeStore({"s": "OLD"})
+    naive = types.SimpleNamespace(
+        id="s",
+        key="s",
+        note="#rotato=gitlab",
+        revision_date="2026-01-01T00:00:00",
+    )
+    report = roster.rotate_tagged(store, [naive], _NOW)
+    assert [i.key for i in report.rotated] == ["s"]
+    assert report.stale == ["s"]  # ~7 months old > 21d default
+
+
+def test_age_days_handles_bad_and_empty_dates():
+    assert roster._age_days("", _NOW) is None
+    assert roster._age_days("not-a-date", _NOW) is None
+
+
+def test_render_emits_alert_prefixes(capsys):
+    # These exact strings are matched by deploy/add-alert.sh log-based policies.
+    report = roster.Report(
+        rotated=[roster.Item("i", "prod", "gitlab", "rotated")],
+        failed=[roster.Item("j", "bad", "gitlab", "failed", "boom")],
+        stale=["overdue"],
+    )
+    assert roster.render(report) == 1
+    out = capsys.readouterr().out
+    assert "rotato-alert STALE overdue" in out
+    assert "rotato-alert FAILED bad (gitlab): boom" in out
+    assert "roster: rotated 1" in out
+
+
+def test_render_stale_without_failure_exits_zero(capsys):
+    report = roster.Report(stale=["overdue"])
+    assert roster.render(report) == 0
+    assert "rotato-alert STALE overdue" in capsys.readouterr().out

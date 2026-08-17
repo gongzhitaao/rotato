@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
 # Create (idempotently) the email alerts for the rotation job. No-op if
-# ALERT_EMAIL is blank. Three policies, since a tag-driven job fails silently in
+# ALERT_EMAIL is blank. Two policies, since a tag-driven job fails silently in
 # ways a plain "job failed" alert can't see:
 #   1. failed      - the Cloud Run job execution failed (a rotation errored).
-#   2. STALE       - a tagged secret's value is older than its cadence, i.e. a
+#   2. STALE       - an enrolled secret's value is older than its cadence, i.e. a
 #                    rotation has been silently failing (matches the job's
 #                    "rotato-alert STALE" log line).
-#   3. UNTAGGED    - roster diff: a secret in the project has no #rotato tag, so
-#                    a forgotten enrollment surfaces before the token expires
-#                    (matches "rotato-diff UNTAGGED"). Noisy if some secrets are
-#                    intentionally unmanaged -- drop this policy if so.
 # Usage: deploy/add-alert.sh [env-file]   (default: deploy/rotato.env)
 set -euo pipefail
 
@@ -56,9 +52,9 @@ create_policy() {
   fi
   local tmp
   tmp=$(mktemp)
+  trap 'rm -f "$tmp"' RETURN
   printf '%s' "$body" >"$tmp"
   gcloud alpha monitoring policies create --policy-from-file="$tmp"
-  rm -f "$tmp"
   echo "  created policy: ${name}"
 }
 
@@ -99,23 +95,6 @@ create_policy "rotato stale secret" "$(cat <<JSON
   }],
   "notificationChannels": ["${CHANNEL}"],
   "alertStrategy": { "notificationRateLimit": { "period": "3600s" }, "autoClose": "604800s" }
-}
-JSON
-)"
-
-echo "== alert policy: rotato untagged secret =="
-create_policy "rotato untagged secret" "$(cat <<JSON
-{
-  "displayName": "rotato untagged secret",
-  "combiner": "OR",
-  "conditions": [{
-    "displayName": "a project secret has no #rotato tag",
-    "conditionMatchedLog": {
-      "filter": "${RUN_FILTER} AND textPayload:\"rotato-diff UNTAGGED\""
-    }
-  }],
-  "notificationChannels": ["${CHANNEL}"],
-  "alertStrategy": { "notificationRateLimit": { "period": "86400s" }, "autoClose": "604800s" }
 }
 JSON
 )"

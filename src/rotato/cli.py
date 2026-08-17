@@ -32,9 +32,17 @@ def _refresh_batch() -> int:
             "error: BWS_ORGANIZATION_ID is required to rotate", file=sys.stderr
         )
         return 2
-    stale_after = float(
-        os.environ.get("STALE_AFTER_DAYS", roster.DEFAULT_STALE_AFTER_DAYS)
-    )
+    stale_after = roster.DEFAULT_STALE_AFTER_DAYS
+    raw = os.environ.get("STALE_AFTER_DAYS")
+    if raw:
+        try:
+            stale_after = float(raw)
+        except ValueError:
+            print(
+                f"warning: ignoring non-numeric STALE_AFTER_DAYS={raw!r}, "
+                f"using {stale_after}",
+                file=sys.stderr,
+            )
     client = bws.BwsClient()
     secrets = client.list_secrets(org)
     now = datetime.datetime.now(datetime.UTC)
