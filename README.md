@@ -32,7 +32,8 @@ read-only Bitwarden token). Then:
 ```bash
 rotato print <name|uuid>            # print the usable credential to stdout
 rotato list  secrets               # what's installed here
-rotato list  rotators              # rotators this build supports
+rotato list  rotators              # rotator types this build supports
+rotato list  tags                  # the note tags that enroll a secret
 ```
 
 Wire git to an installed secret (writes a credential helper that calls
@@ -49,8 +50,7 @@ git -C <a-repo> ls-remote                        # git now authenticates via Bit
 
 `rotato` supports tab-completion via
 [argcomplete](https://pypi.org/project/argcomplete/) — including **installed
-secret names** for `print`/`setup` and **rotator names** for `refresh` (names
-only; never secret values).
+secret names** for `print`/`setup` (names only; never secret values).
 
 The `register-python-argcomplete` generator ships with argcomplete, not rotato,
 so `uv tool install rotato` doesn't put it on PATH — install argcomplete as a
@@ -74,13 +74,15 @@ secrets, `rotato setup <tab>` lists `github gitlab git`, and so on.
 
 ## Server side
 
-`rotato refresh <rotator-name>` runs a rotator (the Cloud Run job entrypoint):
-read current → rotate at the provider → write back to Bitwarden → verify.
-`ROTATOR` env selects the rotator.
+`rotato refresh` (the Cloud Run job entrypoint) rotates **every secret tagged
+for rotation** in the Bitwarden org: read current → rotate at the provider →
+write back → verify. A secret is enrolled by a `#rotato=<type>` tag in its
+Bitwarden note (`rotato list tags` shows the grammar), so adding one needs no
+redeploy.
 
 ## Documentation
 
-Full design, invariants, deployment, and "add a rotator" guide:
+Full design, invariants, deployment, and the enroll / "add a rotator" guides:
 [README.org](https://github.com/gongzhitaao/rotato/blob/main/README.org).
 
 ## License

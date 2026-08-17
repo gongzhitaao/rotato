@@ -10,8 +10,8 @@ demand and nothing needs a long-running server.
 /The rotation loop/ (runs on a schedule, unattended):
 
 #+begin_example
-Cloud Scheduler ──(cron)──► Cloud Run job  "rotato refresh <name>"
-                                  │
+Cloud Scheduler ──(cron)──► Cloud Run job  "rotato refresh"
+                                  │  (for every secret tagged #rotato=…)
    ┌──────────────────────────────┘
    │ 1. read current value  ───────────►  Bitwarden Secrets Manager
    │ 2. rotate at provider  ───────────►  e.g. GitLab: revoke old, mint new
@@ -28,8 +28,10 @@ git push / pull ─► git credential helper ─► rotato print ─► Bitwarde
 
 ** Invariants
 
-- *One rotator per secret, and only it may write.* Rotation revokes the old
-  value immediately, so exactly one job rotates; every consumer is read-only.
+- *One writer; consumers are read-only.* Rotation revokes the old value
+  immediately, so only the scheduled rotator job writes; every consumer reads.
+  Which secrets it rotates is declared in each secret's note (~#rotato=<type>~),
+  so enrolling a secret needs no redeploy.
 - *The bootstrap token is the only standing secret.* The rotator's read+write
   Bitwarden token lives in Secret Manager and is the sole long-lived credential.
   The rotated secret refreshes itself and is never written to a consumer's disk.
@@ -55,33 +57,53 @@ Both the rotation core and the consumer commands are Python, shipped as one
 ** Bitwarden Secrets Manager
 
 - A /project/ (e.g. ~rotato~) holding a /secret/ = the credential's current
-  value. Seed it with a freshly-created, still-valid token. Note its *UUID*.
+  value. Seed it with a freshly-created, still-valid token. Its *UUID* is what
+  consumers ~install~; the rotation job finds it by tag, not by UUID.
 - A ~rotator~ machine account with *read+write* on that project → its access
-  token is ~BWS_ACCESS_TOKEN~ (the bootstrap secret).
+  token is ~BWS_ACCESS_TOKEN~ (the bootstrap secret). The job *lists* the whole
+  org each run (to find tagged secrets), so this account also reads every secret
+  in the projects it can see.
+- The *organization UUID* (~BWS_ORGANIZATION_ID~) — the org the project lives in;
+  find it in the Bitwarden web vault URL, or Access → Machine accounts. The job
+  needs it to list secrets.
 - A separate *read-only* machine account per consumer (laptop, VM).
 
 For a GitLab PAT specifically, give the token the ~api~ scope (covers git
 push/pull, the API incl. opening MRs, and self-rotation) with an expiry that
-matches ~EXPIRY_DAYS~. Without ~api~ / ~self_rotate~, rotation returns 403.
+matches its ~#expiry~ tag. Without ~api~ / ~self_rotate~, rotation returns 403.
 
 ** Deploy
 
 One env file holds everything. ~BWS_ACCESS_TOKEN~ is the only secret in it and is
 needed *only to bootstrap* — ~setup.sh~ uploads it to Secret Manager, after which
-the job reads it from there and you can blank it locally.
+the job reads it from there and you can blank it locally. The job is *one*
+scheduled Cloud Run job that rotates every tagged secret; it takes no per-secret
+config (that lives in each secret's note tags — see /Enrolling a secret/).
 
 #+begin_src bash
-cp deploy/rotato.env.example deploy/rotato.env   # fill: project, token, secret UUID, ALERT_EMAIL
-deploy/run.sh                                    # setup + add-rotator + add-alert, end to end
-gcloud run jobs execute rotato-gitlab-pat --region <REGION> --wait   # smoke test (rotates for real)
+cp deploy/rotato.env.example deploy/rotato.env   # fill: project, bootstrap token, org UUID, ALERT_EMAIL
+deploy/run.sh                                    # setup + deploy-rotator + add-alert, end to end
+gcloud run jobs execute rotato-rotate --region <REGION> --wait   # smoke test (rotates for real)
 #+end_src
 
-~run.sh~ just chains ~setup.sh~ → ~add-rotator.sh~ → ~add-alert.sh~; run them
+~run.sh~ just chains ~setup.sh~ → ~deploy-rotator.sh~ → ~add-alert.sh~; run them
 separately if you prefer. All accept an optional env-file path (default
 ~deploy/rotato.env~) and are *idempotent* — safe to re-run to rebuild the image,
 change the schedule, or replace the bootstrap token. After the smoke test
 confirms a rotation, blank ~BWS_ACCESS_TOKEN~ in ~rotato.env~ (Secret Manager
 holds it now).
+
+/Upgrading from the old per-secret jobs:/ earlier versions deployed one job per
+secret (~rotato-<name>~). Those are now replaced by the single ~rotato-rotate~
+job — delete each stale job, its scheduler trigger, and its alert policy, or it
+will keep running the ~:latest~ image with no ~BWS_ORGANIZATION_ID~ and fail on
+every schedule:
+
+#+begin_src bash
+gcloud run jobs delete rotato-gitlab-pat --region <REGION>
+gcloud scheduler jobs delete rotato-gitlab-pat-trigger --location <REGION>
+# and delete its "rotato-gitlab-pat failed" alert policy in Monitoring
+#+end_src
 
 * Consuming the secret (laptop / VM)
 
@@ -164,25 +186,67 @@ register-python-argcomplete -s fish rotato > ~/.config/fish/completions/rotato.f
 The dynamic completers read =secrets.json= / the rotator registry in-process, so
 there's no output to parse and nothing is cached stale.
 
+* Enrolling a secret for rotation
+
+Rotation is *tag-driven*: one scheduled job (~rotato refresh~) reads every secret
+in the Bitwarden org and rotates each whose *note* enrolls it. Adding a secret to
+rotation is just tagging its note — *no redeploy*.
+
+Tags are whitespace-delimited ~#key=value~ tokens anywhere in the note; a value
+runs to the next whitespace or ~#~. Only ~#rotato=<type>~ is required (it enrolls
+the secret and selects the rotator); everything else is an optional override of a
+rotator's defaults. Run ~rotato list tags~ for the supported knobs.
+
+#+begin_src text
+#rotato=gitlab                                  # gitlab.com, 30-day tokens
+#rotato=gitlab #host=https://gitlab.internal    # a self-managed instance
+#rotato=gitlab #expiry=7 #cadence=14            # 7-day tokens, stale alert after 14d
+#+end_src
+
+~#cadence=<days>~ is understood by the job itself (not a rotator knob): if a
+tagged secret's value is older than that, the run logs a ~STALE~ line so a
+silently-failing rotation is caught before the credential expires. Each run also
+logs the roster it acted on; ~deploy/add-alert.sh~ turns ~STALE~ and failed runs
+into email alerts.
+
+Two caveats of enrolling by free-text note:
+
+- /Staleness is derived from the secret's Bitwarden ~revision_date~/, which is
+  bumped by *any* edit — including editing a tag. Editing a note therefore
+  resets the staleness clock, so a value that stopped rotating right after a
+  note edit can go unflagged until the next ~#cadence~ window. Staleness is a
+  backstop, not the primary signal; the failed-run alert is.
+- /A tag controls where a live credential is sent./ ~#host~, for example, makes
+  the GitLab rotator POST the *current* token to that host's API. Whoever can
+  write the note can redirect it. In Bitwarden, project access is read *or*
+  read+write (no note-only tier), so a note-writer can already read/overwrite
+  the secret — but note that write access is now a rotation-control privilege.
+  If that matters, restrict project write, or add an allowlist in the rotator.
+
 * Add a new rotator
 
-A rotator is a small module exposing ~run(store)~; ~rotate_secret~ handles the
-read → write → verify, so you only implement "given the old value, produce the
-new one."
+A rotator is a ~Rotator~ (in ~src/rotato/rotators/~): a ~rotate(old, cfg)~ function
+that returns the new value, plus a declaration of the ~#key=value~ knobs it reads
+(so ~list tags~ stays in sync and each knob has a default). ~rotate_secret~ still
+handles the read → write → verify, so you only implement "given the old value,
+produce the new one."
 
 1. Write ~src/rotato/rotators/<name>.py~:
 
    #+begin_src python
-   import os
-   from rotato import core
+   from rotato.rotators import base
 
-   def _rotate(old: str) -> str:
-       # call the provider with `old`, do whatever mint/revoke dance it needs,
-       # and return the NEW secret value.
+   def _rotate(old: str, cfg: dict[str, str]) -> str:
+       # call the provider with `old`, using cfg[...] knobs, and return the
+       # NEW secret value.
        ...
 
-   def run(store: core.SecretStore) -> None:
-       core.rotate_secret(store, os.environ["MYSECRET_ID"], _rotate)
+   ROTATOR = base.Rotator(
+       name="<name>",                      # the value of the #rotato=<name> tag
+       rotate=_rotate,
+       knobs=(base.Knob("host", "https://…", "help text"),),
+       help="one-line description",
+   )
    #+end_src
 
    Add a colocated ~<name>_test.py~ next to it (mock the provider + a fake store).
@@ -190,18 +254,14 @@ new one."
 2. Register it in ~src/rotato/rotators/__init__.py~:
 
    #+begin_src python
-   from . import gitlab_pat, myrotator
-   REGISTRY = {"gitlab-pat": gitlab_pat.run, "myrotator": myrotator.run}
+   from . import gitlab, myrotator
+   REGISTRY = {r.name: r for r in (gitlab.ROTATOR, myrotator.ROTATOR)}
    #+end_src
 
-3. Rebuild the image so the new module ships: ~deploy/setup.sh~.
+3. Rebuild the image so the new module ships: ~deploy/setup.sh~ (or ~run.sh~).
 
-4. Deploy its job + schedule. Copy ~deploy/rotato.env~ to ~deploy/<name>.env~,
-   edit the rotator section (~ROTATOR~, ~SCHEDULE~, its secret id, ~ROTATOR_ENV~),
-   then ~deploy/add-rotator.sh deploy/<name>.env~.
-
-The Cloud Run job runs ~rotato refresh <name>~ (a bare ~rotato <name>~ / the
-~ROTATOR~ env var also work), so ~ROTATOR~ selects which rotator runs.
+That's it — no per-rotator deploy. Tag a secret ~#rotato=<name>~ and the existing
+job picks it up on its next run.
 
 * Development & tests
 
@@ -229,9 +289,12 @@ service. CI (~.github/workflows/ci.yml~) runs the same four gates on push and PR
 #+begin_example
 src/rotato/cli.py                 argparse dispatcher: the rotato console script
 src/rotato/core.py                rotate_secret: read -> rotate -> write -> verify
-src/rotato/bws.py                 Bitwarden Secrets Manager client (get/set value)
-src/rotato/rotators/<name>.py     per-secret logic; exposes run(store)
-src/rotato/rotators/__init__.py   name -> rotator registry
+src/rotato/bws.py                 Bitwarden Secrets Manager client (get/set/list)
+src/rotato/tags.py                parse #key=value enrollment tags from a note
+src/rotato/roster.py              tag-driven batch: rotate every tagged secret
+src/rotato/rotators/base.py       Rotator/Knob: rotate(old, cfg) + config knobs
+src/rotato/rotators/<name>.py     one provider's rotate logic; exposes ROTATOR
+src/rotato/rotators/__init__.py   type -> Rotator registry
 src/rotato/consumer/config.py     ~/.config/rotato paths + installed-secret registry
 src/rotato/consumer/install.py    rotato install: register a secret on this machine
 src/rotato/consumer/credential.py rotato print: emit the usable credential
@@ -241,9 +304,9 @@ src/rotato/**/*_test.py           colocated pytest tests (foo.py -> foo_test.py)
 Dockerfile                        multi-stage: uv builds the venv; python:3.14, non-root
 deploy/rotato.env(.example)       the one fill-in-and-run config (gitignored: rotato.env)
 deploy/setup.sh                   one-time shared infra (APIs, registry, image, SAs)
-deploy/add-rotator.sh             one Cloud Run job + scheduler per secret
-deploy/add-alert.sh               email alert on a rotator's failed executions
-deploy/run.sh                     setup + add-rotator + add-alert, end to end
+deploy/deploy-rotator.sh          the single tag-driven Cloud Run job + scheduler
+deploy/add-alert.sh               email alerts: failed run / STALE secret
+deploy/run.sh                     setup + deploy-rotator + add-alert, end to end
 README.md                         short PyPI-facing readme (this file is the full one)
 .github/workflows/ci.yml          CI gates (ruff, pylint, pytest)
 .github/workflows/publish.yml     build + publish to PyPI on release (Trusted Publishing)

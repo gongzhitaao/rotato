@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# Create (idempotently) an email alert that fires when a rotator's Cloud Run job
-# records a failed execution. No-op if ALERT_EMAIL is blank.
+# Create (idempotently) the email alerts for the rotation job. No-op if
+# ALERT_EMAIL is blank. Two policies, since a tag-driven job fails silently in
+# ways a plain "job failed" alert can't see:
+#   1. failed      - the Cloud Run job execution failed (a rotation errored).
+#   2. STALE       - an enrolled secret's value is older than its cadence, i.e. a
+#                    rotation has been silently failing (matches the job's
+#                    "rotato-alert STALE" log line).
 # Usage: deploy/add-alert.sh [env-file]   (default: deploy/rotato.env)
 set -euo pipefail
 
@@ -9,7 +14,7 @@ ENVFILE="${1:-$HERE/rotato.env}"
 [ -f "$ENVFILE" ] || { echo "no env file: ${ENVFILE}" >&2; exit 1; }
 # shellcheck source=/dev/null
 source "$ENVFILE"
-: "${PROJECT_ID:?}"; : "${ROTATOR:?}"
+: "${PROJECT_ID:?}"
 
 if [ -z "${ALERT_EMAIL:-}" ]; then
   echo "ALERT_EMAIL blank; skipping alert setup"
@@ -18,8 +23,7 @@ fi
 
 gcloud config set project "$PROJECT_ID" >/dev/null
 
-JOB="rotato-${ROTATOR}"
-POLICY_NAME="rotato-${ROTATOR} failed"
+JOB="rotato-rotate"
 
 echo "== notification channel =="
 CHANNEL=$(gcloud beta monitoring channels list \
@@ -35,25 +39,36 @@ else
   echo "  reusing channel: ${CHANNEL}"
 fi
 
-echo "== alert policy =="
-EXISTING=$(gcloud alpha monitoring policies list \
-  --filter="displayName='${POLICY_NAME}'" \
-  --format="value(name)" 2>/dev/null | head -n1)
-if [ -n "$EXISTING" ]; then
-  echo "  policy already exists: ${EXISTING} (skipping)"
-  exit 0
-fi
+# Create a policy from a JSON body on stdin, skipping if one with the same
+# displayName already exists.
+create_policy() {
+  local name="$1" body="$2"
+  local existing
+  existing=$(gcloud alpha monitoring policies list \
+    --filter="displayName='${name}'" --format="value(name)" 2>/dev/null | head -n1)
+  if [ -n "$existing" ]; then
+    echo "  policy already exists: ${name} (skipping)"
+    return 0
+  fi
+  local tmp
+  tmp=$(mktemp)
+  trap 'rm -f "$tmp"' RETURN
+  printf '%s' "$body" >"$tmp"
+  gcloud alpha monitoring policies create --policy-from-file="$tmp"
+  echo "  created policy: ${name}"
+}
 
-TMP=$(mktemp)
-trap 'rm -f "$TMP"' EXIT
-cat >"$TMP" <<JSON
+RUN_FILTER="resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${JOB}\""
+
+echo "== alert policy: ${JOB} failed =="
+create_policy "rotato-rotate failed" "$(cat <<JSON
 {
-  "displayName": "${POLICY_NAME}",
+  "displayName": "rotato-rotate failed",
   "combiner": "OR",
   "conditions": [{
     "displayName": "${JOB} execution failed",
     "conditionThreshold": {
-      "filter": "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${JOB}\" AND metric.type=\"run.googleapis.com/job/completed_execution_count\" AND metric.labels.result=\"failed\"",
+      "filter": "${RUN_FILTER} AND metric.type=\"run.googleapis.com/job/completed_execution_count\" AND metric.labels.result=\"failed\"",
       "comparison": "COMPARISON_GT",
       "thresholdValue": 0,
       "duration": "0s",
@@ -65,6 +80,21 @@ cat >"$TMP" <<JSON
   "alertStrategy": { "autoClose": "604800s" }
 }
 JSON
+)"
 
-gcloud alpha monitoring policies create --policy-from-file="$TMP"
-echo "  created policy: ${POLICY_NAME}"
+echo "== alert policy: rotato stale secret =="
+create_policy "rotato stale secret" "$(cat <<JSON
+{
+  "displayName": "rotato stale secret",
+  "combiner": "OR",
+  "conditions": [{
+    "displayName": "a tagged secret is overdue for rotation",
+    "conditionMatchedLog": {
+      "filter": "${RUN_FILTER} AND textPayload:\"rotato-alert STALE\""
+    }
+  }],
+  "notificationChannels": ["${CHANNEL}"],
+  "alertStrategy": { "notificationRateLimit": { "period": "3600s" }, "autoClose": "604800s" }
+}
+JSON
+)"
